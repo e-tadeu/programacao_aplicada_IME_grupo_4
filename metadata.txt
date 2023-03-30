@@ -3,14 +3,14 @@
 # This file should be included when you package your plugin.# Mandatory items:
 
 [general]
-name=ProgramacaoAplicadaGrupoX
+name=ProgramacaoAplicadaGrupo4
 qgisMinimumVersion=3.22
-description=Solução do Grupo X
-version=0.11
-author=Grupo X
-email=borba.philipe@ime.eb.br
+description=Solução do Grupo 4
+version=0.1
+author=Grupo 4
+email=e.tadeu.eb@ime.eb.br / raulmagno@ime.eb.br / arthur.cavalcante@ime.eb.br
 
-about=Soluções dos projetos de programação aplicada do grupo X
+about=Soluções dos projetos de programação aplicada do grupo 4
 
 tracker=http://bugs
 repository=http://repo
@@ -25,7 +25,7 @@ hasProcessingProvider=yes
 # Tags are comma separated with spaces allowed
 tags=python
 
-homepage=http://homepage
+homepage=https://github.com/e-tadeu/programacao_aplicada_IME_grupo_4
 category=Analysis
 icon=icon.png
 # experimental flag
