@@ -32,6 +32,9 @@ __copyright__ = '(C) 2023 by Grupo 4'
 
 __revision__ = '$Format:%H$'
 
+import pandas as pd
+from math import sqrt
+from os import name
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
                        QgsFeatureSink,
@@ -39,7 +42,15 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingParameterFeatureSource,
                        QgsProcessingParameterFeatureSink,
                        QgsProcessingParameterMultipleLayers,
-                       QgsProcessingException)
+                       QgsProcessingException,
+                       QgsProject,
+                       QgsVectorLayer,
+                       QgsFeature,
+                       QgsField,
+                       QgsPointXY,
+                       QgsGeometry,
+                       QVariant
+                       )
 
 
 class Projeto1Solucao(QgsProcessingAlgorithm):
@@ -71,7 +82,7 @@ class Projeto1Solucao(QgsProcessingAlgorithm):
         with some other properties.
         """
 
-        # input layers.
+        # Adiciona camadas como parâmetros de processamento.
 
         self.addParameter(
             QgsProcessingParameterMultipleLayers(
@@ -104,11 +115,16 @@ class Projeto1Solucao(QgsProcessingAlgorithm):
         Here is where the processing itself takes place.
         """
 
-        # Retrieve the feature source and sink. The 'dest_id' variable is used
-        # to uniquely identify the feature sink, and must be included in the
-        # dictionary returned by the processAlgorithm function.
+        # Definindo parâmetros como fontes
 
-
+        cmdpts = self.parameterAsSource(
+            parameters,
+            self.INPUT,
+            context
+        )
+        if cmdpts is None:
+            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT))
+        
         rasters = self.parameterAsLayerList(
             parameters,
             self.INPUTRASTER,
@@ -116,26 +132,91 @@ class Projeto1Solucao(QgsProcessingAlgorithm):
         )
         if rasters is None:
             raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUTRASTER))
-        
 
         source = self.parameterAsSource(parameters, self.INPUT, context)
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context, source.fields(), source.wkbType(), source.sourceCrs())
 
-        # Compute the number of steps to display within the progress bar and
-        # get features from source
-        total = 100.0 / source.featureCount() if source.featureCount() else 0
-        features = source.getFeatures()
+# ***************************************************
+# *********** 1. CARREGAMENTO DOS DADOS *************
+# ***************************************************
 
-        for current, feature in enumerate(features):
-            # Stop the algorithm if cancel button has been clicked
-            if feedback.isCanceled():
-                break
+        pc = list()
+        for i in range (0, len(cmdpts)): #Adequar a uma camada vetorial
+            x = cmdpts['x'][i]
+            y = cmdpts['y'][i]
+            z = cmdpts['z'][i]
+            ponto = [x, y, z]
+            pc.append(ponto)
 
-            # Add a feature in the sink
-            sink.addFeature(feature, QgsFeatureSink.FastInsert)
+            nomes = name.INPUTRASTER
 
-            # Update the progress bar
-            feedback.setProgress(int(current * total))
+# ***************************************************
+# *** 2. FUNÇÃO QUE CALCULA A ACURÁCIA POSICIONAL ***
+# ***************************************************
+        def acuracia (modelo, pontos, name):
+    #Os parâmetros desta função são (modelo digital de superfície, pontos de controle, nome)
+            mds = modelo
+            pc = pontos
+            nome = str(name)
+
+    # Erro
+            xmin = mds.extent().xMinimum()
+            xmax = mds.extent().xMaximum()
+            ymin = mds.extent().yMinimum()
+            ymax = mds.extent().yMaximum()
+
+            erro = list()
+            cont = 0
+            for p in range(len(pc[0:])-1):
+                if xmin <= float(pc[p+1][0]) <= xmax and ymin <= float(pc[p+1][1]) <= ymax:
+                    error = 0
+                    value, result = mds.dataProvider().sample(QgsPointXY(float(pc[p+1][0]),float(pc[p+1][1])), 1)
+                    error = value - float(pc[p+1][2])
+                    erro.append(error)
+                    cont += 1
+
+    # Cálculo do EMQz ---- Ajustar para adicionar a informação do PEC em alguma camada
+            emqz = 0
+            for i in erro:
+                emqz = emqz + i**2
+                emqz = sqrt(emqz/cont)
+
+                if emqz <= 1.67:
+                    print(f'O Padrão de Exatidão Cartográfica do {nome} é A com Erro Médio Quadrático de {emqz:.3f}')
+                elif 1.67 < emqz <= 3.33:
+                    print(f'O Padrão de Exatidão Cartográfica do {nome} é B com Erro Médio Quadrático de {emqz:.3f}')
+                elif 3.33 < emqz <= 4.00:
+                    print(f'O Padrão de Exatidão Cartográfica do {nome} é C com Erro Médio Quadrático de {emqz:.3f}')
+                elif 4.00 < emqz <= 5.00:
+                    print(f'O Padrão de Exatidão Cartográfica do {nome} é D com Erro Médio Quadrático de {emqz:.3f}')
+
+    # Camada temporária para o erro do MDS
+            points = f'Pontos de controle {nome}'
+            memoryLayer = QgsVectorLayer("Point?crs=EPSG:31982", points, "memory")  
+            dp = memoryLayer.dataProvider() 
+            dp.addAttributes([QgsField('erro', QVariant.Double)])
+            memoryLayer.updateFields()
+            QgsProject.instance().addMapLayer(memoryLayer)
+
+            aux = 0
+            for p in range(len(pc[0:])-1):
+                if xmin <= float(pc[p+1][0]) <= xmax and ymin <= float(pc[p+1][1]) <= ymax:
+                    feat = QgsFeature()
+                    feat.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(float(pc[p+1][0]),float(pc[p+1][1]))))
+                    feat.setAttributes([erro[aux]])
+                    dp.addFeatures([feat])
+                    memoryLayer.updateExtents()
+                    aux += 1
+
+# ***************************************************
+# ************ 3. APLICAÇÃO DA FUNÇÃO ***************
+# ***************************************************
+
+#Aplicada uma estrutura de repetição que aplica a função criada para todas as INPUTRASTER carregadas
+            for i in range (0, len(rasters)):
+                acuracia(rasters[i], pc, nomes[i])
+
+
 
         # Return the results of the algorithm. In this case our only result is
         # the feature sink which contains the processed features, but some
@@ -143,7 +224,7 @@ class Projeto1Solucao(QgsProcessingAlgorithm):
         # statistics, etc. These should all be included in the returned
         # dictionary, with keys matching the feature corresponding parameter
         # or output names.
-        return {self.OUTPUT: dest_id}
+            return {self.OUTPUT: dest_id}
 
     def name(self):
         """
