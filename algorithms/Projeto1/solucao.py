@@ -32,199 +32,174 @@ __copyright__ = '(C) 2023 by Grupo 4'
 
 __revision__ = '$Format:%H$'
 
-import pandas as pd
-from math import sqrt
-from os import name
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
-                       QgsFeatureSink,
                        QgsProcessingAlgorithm,
-                       QgsProcessingParameterFeatureSource,
                        QgsProcessingParameterFeatureSink,
-                       QgsProcessingParameterMultipleLayers,
-                       QgsProcessingException,
-                       QgsProject,
-                       QgsVectorLayer,
-                       QgsFeature,
-                       QgsField,
-                       QgsPointXY,
-                       QgsGeometry,
-                       QVariant
-                       )
+                       QgsProcessingMultiStepFeedback,
+                       QgsProcessingParameterVectorLayer,
+                       QgsProcessingParameterRasterLayer,
+                       QgsExpression)
+import processing
 
 
 class Projeto1Solucao(QgsProcessingAlgorithm):
     """
-    This is an example algorithm that takes a vector layer and
+    This is an algorithm that takes a vector layer and
     creates a new identical one.
 
-    It is meant to be used as an example of how to create your own
-    algorithms and explain methods and variables used to do it. An
-    algorithm like this will be available in all elements, and there
-    is not need for additional work.
-
-    All Processing algorithms should extend the QgsProcessingAlgorithm
-    class.
     """
 
-    # Constants used to refer to parameters and outputs. They will be
-    # used when calling the algorithm from another algorithm, or when
-    # calling from the QGIS console.
-
-    OUTPUT = 'OUTPUT'
-    INPUT = 'INPUT'
-    INPUTRASTER = 'INPUTRASTER'
-    
-
-    def initAlgorithm(self, config):
-        """
-        Here we define the inputs and output of the algorithm, along
-        with some other properties.
-        """
-
-        # Adiciona camadas como parâmetros de processamento.
-
-        self.addParameter(
-            QgsProcessingParameterMultipleLayers(
-                self.INPUTRASTER,
-                self.tr('Lista de Rasters'),
-                layerType = QgsProcessing.TypeRaster
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterFeatureSource(
-                self.INPUT,
-                self.tr('Camada de pontos de controle'),
-                [QgsProcessing.TypeVectorPoint]
-            )
-        )
-
-        # We add a feature sink in which to store our processed features (this
-        # usually takes the form of a newly created vector layer when the
-        # algorithm is run in QGIS).
-        self.addParameter(
-            QgsProcessingParameterFeatureSink(
-                self.OUTPUT,
-                self.tr('Output layer')
-            )
-        )
-
-    def processAlgorithm(self, parameters, context, feedback):
-        """
-        Here is where the processing itself takes place.
-        """
-
-        # Definindo parâmetros como fontes
-
-        cmdpts = self.parameterAsSource(
-            parameters,
-            self.INPUT,
-            context
-        )
-        if cmdpts is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT))
+    def initAlgorithm(self, config=None):
+        # Camada de Entrada.
+        self.addParameter(QgsProcessingParameterVectorLayer('pontos_de_controle', 'Pontos de Controle', 
+                                                            types=[QgsProcessing.TypeVectorPoint], 
+                                                            defaultValue=None))
+        self.addParameter(QgsProcessingParameterRasterLayer('mde', 'MDE',
+                                                             defaultValue=None))
         
-        rasters = self.parameterAsLayerList(
-            parameters,
-            self.INPUTRASTER,
-            context
-        )
-        if rasters is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUTRASTER))
-
-        source = self.parameterAsSource(parameters, self.INPUT, context)
-        (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context, source.fields(), source.wkbType(), source.sourceCrs())
-
-# ***************************************************
-# *********** 1. CARREGAMENTO DOS DADOS *************
-# ***************************************************
-
-        pc = list()
-        for i in range (0, len(cmdpts)): #Adequar a uma camada vetorial
-            x = cmdpts['x'][i]
-            y = cmdpts['y'][i]
-            z = cmdpts['z'][i]
-            ponto = [x, y, z]
-            pc.append(ponto)
-
-            nomes = name.INPUTRASTER
-
-# ***************************************************
-# *** 2. FUNÇÃO QUE CALCULA A ACURÁCIA POSICIONAL ***
-# ***************************************************
-        def acuracia (modelo, pontos, name):
-    #Os parâmetros desta função são (modelo digital de superfície, pontos de controle, nome)
-            mds = modelo
-            pc = pontos
-            nome = str(name)
-
-    # Erro
-            xmin = mds.extent().xMinimum()
-            xmax = mds.extent().xMaximum()
-            ymin = mds.extent().yMinimum()
-            ymax = mds.extent().yMaximum()
-
-            erro = list()
-            cont = 0
-            for p in range(len(pc[0:])-1):
-                if xmin <= float(pc[p+1][0]) <= xmax and ymin <= float(pc[p+1][1]) <= ymax:
-                    error = 0
-                    value, result = mds.dataProvider().sample(QgsPointXY(float(pc[p+1][0]),float(pc[p+1][1])), 1)
-                    error = value - float(pc[p+1][2])
-                    erro.append(error)
-                    cont += 1
-
-    # Cálculo do EMQz ---- Ajustar para adicionar a informação do PEC em alguma camada
-            emqz = 0
-            for i in erro:
-                emqz = emqz + i**2
-                emqz = sqrt(emqz/cont)
-
-                if emqz <= 1.67:
-                    print(f'O Padrão de Exatidão Cartográfica do {nome} é A com Erro Médio Quadrático de {emqz:.3f}')
-                elif 1.67 < emqz <= 3.33:
-                    print(f'O Padrão de Exatidão Cartográfica do {nome} é B com Erro Médio Quadrático de {emqz:.3f}')
-                elif 3.33 < emqz <= 4.00:
-                    print(f'O Padrão de Exatidão Cartográfica do {nome} é C com Erro Médio Quadrático de {emqz:.3f}')
-                elif 4.00 < emqz <= 5.00:
-                    print(f'O Padrão de Exatidão Cartográfica do {nome} é D com Erro Médio Quadrático de {emqz:.3f}')
-
-    # Camada temporária para o erro do MDS
-            points = f'Pontos de controle {nome}'
-            memoryLayer = QgsVectorLayer("Point?crs=EPSG:31982", points, "memory")  
-            dp = memoryLayer.dataProvider() 
-            dp.addAttributes([QgsField('erro', QVariant.Double)])
-            memoryLayer.updateFields()
-            QgsProject.instance().addMapLayer(memoryLayer)
-
-            aux = 0
-            for p in range(len(pc[0:])-1):
-                if xmin <= float(pc[p+1][0]) <= xmax and ymin <= float(pc[p+1][1]) <= ymax:
-                    feat = QgsFeature()
-                    feat.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(float(pc[p+1][0]),float(pc[p+1][1]))))
-                    feat.setAttributes([erro[aux]])
-                    dp.addFeatures([feat])
-                    memoryLayer.updateExtents()
-                    aux += 1
-
-# ***************************************************
-# ************ 3. APLICAÇÃO DA FUNÇÃO ***************
-# ***************************************************
-
-#Aplicada uma estrutura de repetição que aplica a função criada para todas as INPUTRASTER carregadas
-            for i in range (0, len(rasters)):
-                acuracia(rasters[i], pc, nomes[i])
+          # Camada de Saida.
+        self.addParameter(QgsProcessingParameterFeatureSink('AcuraciaAltimetrica', 'Acuracia Altimetrica', 
+                                                            type=QgsProcessing.TypeVectorAnyGeometry, 
+                                                            createByDefault=True, 
+                                                            supportsAppend=True, 
+                                                            defaultValue='TEMPORARY_OUTPUT'))
 
 
+    def processAlgorithm(self, parameters, context, model_feedback):
+        # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
+        # overall progress through the model
+        feedback = QgsProcessingMultiStepFeedback(9, model_feedback)
+        results = {}
+        outputs = {}
 
-        # Return the results of the algorithm. In this case our only result is
-        # the feature sink which contains the processed features, but some
-        # algorithms may return multiple feature sinks, calculated numeric
-        # statistics, etc. These should all be included in the returned
-        # dictionary, with keys matching the feature corresponding parameter
-        # or output names.
-            return {self.OUTPUT: dest_id}
+        # Delimitando limites
+        alg_params = {
+            'LAYERS': parameters['mde'],
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['DelimitandoLimites'] = processing.run('native:exportlayersinformation', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(1)
+        if feedback.isCanceled():
+            return {}
+
+        # Descartando campos
+        alg_params = {
+            'COLUMN': QgsExpression("'source;crs;provider;file_path;layer_name;subset;abstract;attribution'").evaluate(),
+            'INPUT': outputs['DelimitandoLimites']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['DescartandoCampos'] = processing.run('native:deletecolumn', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(2)
+        if feedback.isCanceled():
+            return {}
+
+        # Filtrando pontos
+        alg_params = {
+            'INPUT': parameters['pontos_de_controle'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OVERLAYS': outputs['DescartandoCampos']['OUTPUT'],
+            'OVERLAY_FIELDS_PREFIX': '',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['FiltrandoPontos'] = processing.run('native:multiintersection', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(3)
+        if feedback.isCanceled():
+            return {}
+
+        # Extraindo o Z da geometria
+        alg_params = {
+            'FIELD_LENGTH': 0,
+            'FIELD_NAME': 'ZRef',
+            'FIELD_PRECISION': 0,
+            'FIELD_TYPE': 0,  # Decimal (double)
+            'FORMULA': '$z',
+            'INPUT': outputs['FiltrandoPontos']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['ExtraindoOZDaGeometria'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(4)
+        if feedback.isCanceled():
+            return {}
+
+        # Extraindo valores do raster
+        alg_params = {
+            'COLUMN_PREFIX': 'ZRast',
+            'INPUT': outputs['ExtraindoOZDaGeometria']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'RASTERCOPY': parameters['mde'],
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['ExtraindoValoresDoRaster'] = processing.run('native:rastersampling', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(5)
+        if feedback.isCanceled():
+            return {}
+
+        # Calculando o Erro
+        alg_params = {
+            'FIELD_LENGTH': 0,
+            'FIELD_NAME': 'Erro',
+            'FIELD_PRECISION': 0,
+            'FIELD_TYPE': 0,  # Decimal (double)
+            'FORMULA': '"ZRef"-"ZRast1"',
+            'INPUT': outputs['ExtraindoValoresDoRaster']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['CalculandoOErro'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(6)
+        if feedback.isCanceled():
+            return {}
+
+        # EMQz
+        alg_params = {
+            'FIELD_LENGTH': 0,
+            'FIELD_NAME': 'EMQz',
+            'FIELD_PRECISION': 2,
+            'FIELD_TYPE': 0,  # Decimal (double)
+            'FORMULA': '(mean("Erro","name"))^2',
+            'INPUT': outputs['CalculandoOErro']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['Emqz'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(7)
+        if feedback.isCanceled():
+            return {}
+
+        # Analise do PEC
+        alg_params = {
+            'FIELD_LENGTH': 50,
+            'FIELD_NAME': 'PEC',
+            'FIELD_PRECISION': 0,
+            'FIELD_TYPE': 2,  # Texto (string)
+            'FORMULA': 'if("EMQz"<=1.67,\'A\',if("EMQz">1.67 AND "EMQz"<=3.33,\'B\',if("EMQz">3.33 AND "EMQz"<=4.00,\'C\',if("EMQz">4.00 AND "EMQz"<=5.00,\'D\',\'Sem Classifica��o\'))))\r\n\r\n',
+            'INPUT': outputs['Emqz']['OUTPUT'],
+            'OUTPUT': parameters['AcuraciaAltimetrica']
+        }
+        outputs['AnaliseDoPec'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        results['AcuraciaAltimetrica'] = outputs['AnaliseDoPec']['OUTPUT']
+
+        feedback.setCurrentStep(8)
+        if feedback.isCanceled():
+            return {}
+
+        # Configurando o estilo da camada
+        alg_params = {
+            'INPUT': outputs['AnaliseDoPec']['OUTPUT'],
+            'STYLE': 'estilo-erro-altimetrico.qml'
+        }
+        outputs['ConfigurandoOEstiloDaCamada'] = processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        return results
 
     def name(self):
         """
