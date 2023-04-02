@@ -182,7 +182,7 @@ class Projeto1Solucao(QgsProcessingAlgorithm):
             'FIELD_NAME': 'PEC',
             'FIELD_PRECISION': 0,
             'FIELD_TYPE': 2,  # Texto (string)
-            'FORMULA': 'if("EMQz"<=1.67,\'A\',if("EMQz">1.67 AND "EMQz"<=3.33,\'B\',if("EMQz">3.33 AND "EMQz"<=4.00,\'C\',if("EMQz">4.00 AND "EMQz"<=5.00,\'D\',\'Sem Classifica��o\'))))\r\n\r\n',
+            'FORMULA': 'if("EMQz"<=1.67,\'A\',if("EMQz">1.67 AND "EMQz"<=3.33,\'B\',if("EMQz">3.33 AND "EMQz"<=4.00,\'C\',if("EMQz">4.00 AND "EMQz"<=5.00,\'D\',\'Sem Classificacao\'))))\r\n\r\n',
             'INPUT': outputs['Emqz']['OUTPUT'],
             'OUTPUT': parameters['AcuraciaAltimetrica']
         }
