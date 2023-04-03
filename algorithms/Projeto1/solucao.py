@@ -99,13 +99,16 @@ class Projeto1Solucao(QgsProcessingAlgorithm):
 
         # Filtrando pontos
         alg_params = {
+            'GRID_SIZE': None,
             'INPUT': parameters['pontos_de_controle'],
+            'INPUT_FIELDS': [''],
             'OUTPUT': 'TEMPORARY_OUTPUT',
-            'OVERLAYS': outputs['DescartandoCampos']['OUTPUT'],
+            'OVERLAY': outputs['DescartandoCampos']['OUTPUT'],
+            'OVERLAY_FIELDS': [''],
             'OVERLAY_FIELDS_PREFIX': '',
             'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
         }
-        outputs['FiltrandoPontos'] = processing.run('native:multiintersection', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['FiltrandoPontos'] = processing.run('native:intersection', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(3)
         if feedback.isCanceled():
