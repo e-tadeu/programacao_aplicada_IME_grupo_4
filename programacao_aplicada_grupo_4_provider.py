@@ -70,7 +70,7 @@ class ProgramacaoAplicadaGrupo4Provider(QgsProcessingProvider):
         string should be a unique, short, character only string, eg "qgis" or
         "gdal". This string should not be localised.
         """
-        return 'ProgramacaoAplicadaGrupoX'
+        return 'ProgramacaoAplicadaGrupo4'
 
     def name(self):
         """
@@ -79,7 +79,7 @@ class ProgramacaoAplicadaGrupo4Provider(QgsProcessingProvider):
 
         This string should be short (e.g. "Lastools") and localised.
         """
-        return self.tr('ProgramacaoAplicadaGrupoX')
+        return self.tr('ProgramacaoAplicadaGrupo4')
 
     def icon(self):
         """
