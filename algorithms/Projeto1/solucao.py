@@ -32,6 +32,7 @@ __copyright__ = '(C) 2023 by Grupo 4'
 
 __revision__ = '$Format:%H$'
 
+import os
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
@@ -43,7 +44,7 @@ from qgis.core import (QgsProcessing,
 import processing
 
 
-class Projeto1Solucao(QgsProcessingAlgorithm):
+class Projeto1Solucaocomplementar(QgsProcessingAlgorithm):
     """
     This is an algorithm that takes a vector layer and
     creates a new identical one.
@@ -197,9 +198,16 @@ class Projeto1Solucao(QgsProcessingAlgorithm):
             return {}
 
         # Configurando o estilo da camada
+
+        # Get the path to the plugin directory
+        plugin_dir = os.path.dirname(__file__)
+
+        # Construct the path to the layer style file
+        style_file = os.path.join(plugin_dir, 'estilo-erro-altimetrico.qml')
+
         alg_params = {
             'INPUT': outputs['AnaliseDoPec']['OUTPUT'],
-            'STYLE': 'estilo-erro-altimetrico.qml'
+            'STYLE': style_file
         }
         outputs['ConfigurandoOEstiloDaCamada'] = processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
         return results
@@ -242,4 +250,4 @@ class Projeto1Solucao(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return Projeto1Solucao()
+        return Projeto1Solucaocomplementar()
