@@ -31,96 +31,225 @@ __copyright__ = '(C) 2023 by Grupo 4'
 
 __revision__ = '$Format:%H$'
 
+import os
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
-                       QgsFeatureSink,
+                       QgsCoordinateReferenceSystem, 
+                       QgsVectorLayer,
+                       QgsGeometry,
                        QgsProcessingAlgorithm,
-                       QgsProcessingParameterFeatureSource,
-                       QgsProcessingParameterFeatureSink)
-
+                       QgsProcessingParameterFeatureSink,
+                       QgsProcessingMultiStepFeedback,
+                       QgsRasterLayer,
+                       QgsProcessingException,
+                       QgsProcessingParameterFile,
+                       QgsProcessingParameterVectorLayer,
+                       QgsProcessingParameterRasterLayer,
+                       QgsExpression)
+import processing
 
 class Projeto1SolucaoComplementar(QgsProcessingAlgorithm):
+
     """
-    This is an example algorithm that takes a vector layer and
-    creates a new identical one.
+    Calcular o EMQz entre os MDS adjacentes (pareados dois a dois,
+    considerando a maior área de sobreposição entre rasters adjacentes), 
+    criando uma malha de pontos com 200 metros de distância
+    X e Y nas intersecçoes:
 
-    It is meant to be used as an example of how to create your own
-    algorithms and explain methods and variables used to do it. An
-    algorithm like this will be available in all elements, and there
-    is not need for additional work.
+    • Determinar x min, x max, y min, y max de cada raster;
 
-    All Processing algorithms should extend the QgsProcessingAlgorithm
-    class.
+    • Realizar loop em x e y considerando a distância de 200 metros em x
+    e y;
+
+    • Somente considerar para o cálculo pontos que estejam em ambos os
+    raster;
+
+    • A entrada do processo devem ser todos os rasters a serem
+    considerados;
+
+    • A saída do processo deve ser no formato vetorial polígono. Cada
+    polígono de saída é a intersecção dos rasters avaliados devem ter
+    atributos raster1 (basename do arquivo 1), raster2 (basename do
+    arquivo 2) e emqz.
+
     """
 
-    # Constants used to refer to parameters and outputs. They will be
-    # used when calling the algorithm from another algorithm, or when
-    # calling from the QGIS console.
+    def initAlgorithm(self, config=None):
+        # Camada de Entrada.
+        self.addParameter(QgsProcessingParameterRasterLayer('input_raster_1', 'Input raster 1', defaultValue=None))
+        self.addParameter(QgsProcessingParameterRasterLayer('input_raster_2', 'Input raster 2', defaultValue=None))
+        self.addParameter(QgsProcessingParameterRasterLayer('input_raster_3', 'Input raster 3', defaultValue=None))
+        self.addParameter(QgsProcessingParameterRasterLayer('input_raster_4', 'Input raster 4', defaultValue=None))
+        self.addParameter(QgsProcessingParameterRasterLayer('input_raster_5', 'Input raster 5', defaultValue=None))
+        self.addParameter(QgsProcessingParameterRasterLayer('input_raster_6', 'Input raster 6', defaultValue=None))
 
-    OUTPUT = 'OUTPUT'
-    INPUT = 'INPUT'
+        
+        #self.addParameter(QgsProcessingParameterFile('mdes', 'Modelos Digitais de Superficie', fileFilter='Tif (*.TIF)'))
 
-    def initAlgorithm(self, config):
-        """
-        Here we define the inputs and output of the algorithm, along
-        with some other properties.
-        """
 
-        # We add the input vector features source. It can have any kind of
-        # geometry.
-        self.addParameter(
-            QgsProcessingParameterFeatureSource(
-                self.INPUT,
-                self.tr('Input layer'),
-                [QgsProcessing.TypeVectorAnyGeometry]
-            )
+        # Camada de Saida.
+        self.addParameter(QgsProcessingParameterFeatureSink('multi_polygon', 'Multiplos polígonos', 
+                                                            type=QgsProcessing.TypeVectorAnyGeometry,
+                                                            createByDefault=True,
+                                                            supportsAppend=True,
+                                                            defaultValue='TEMPORARY_OUTPUT'))
+
+
+    def processAlgorithm(self, parameters, context, model_feedback):
+        # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
+        # overall progress through the model
+
+        feedback = QgsProcessingMultiStepFeedback(7, model_feedback)
+        results = {}
+        outputs = {}
+
+        # Defining crs
+        crs = QgsCoordinateReferenceSystem(
+        'EPSG:31982'
         )
 
-        # We add a feature sink in which to store our processed features (this
-        # usually takes the form of a newly created vector layer when the
-        # algorithm is run in QGIS).
-        self.addParameter(
-            QgsProcessingParameterFeatureSink(
-                self.OUTPUT,
-                self.tr('Output layer')
-            )
-        )
+        input_rasters = [parameters['input_raster_1'], parameters['input_raster_2'], parameters['input_raster_3'], 
+                         parameters['input_raster_4'], parameters['input_raster_5'], parameters['input_raster_6']]
 
-    def processAlgorithm(self, parameters, context, feedback):
-        """
-        Here is where the processing itself takes place.
-        """
+        intersection_features = []
 
-        # Retrieve the feature source and sink. The 'dest_id' variable is used
-        # to uniquely identify the feature sink, and must be included in the
-        # dictionary returned by the processAlgorithm function.
-        source = self.parameterAsSource(parameters, self.INPUT, context)
-        (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT,
-                context, source.fields(), source.wkbType(), source.sourceCrs())
+        for i in range(len(input_rasters)):
+            for j in range(i+1, len(input_rasters)):
+                # Computar a intersecção entre cada um dos rasters
+                alg_params = {
+                    'INPUT': [input_rasters[i], input_rasters[j]],
+                    'OVERLAY': None,
+                    'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+                }
+                intersection = processing.run('native:intersection', alg_params, context=context, feedback=feedback, is_child_algorithm=True)['OUTPUT']
+                
+                # add intersection features to the list
+                intersection_features.append(intersection)
 
-        # Compute the number of steps to display within the progress bar and
-        # get features from source
-        total = 100.0 / source.featureCount() if source.featureCount() else 0
-        features = source.getFeatures()
+        # Combinar todas as intersecções em uma geometria de multiplos polígonos
+        geom_collection = QgsGeometry().fromMultiPolygon([f.geometry().asPolygon() for f in intersection_features])
 
-        for current, feature in enumerate(features):
-            # Stop the algorithm if cancel button has been clicked
-            if feedback.isCanceled():
-                break
+        feedback.setCurrentStep(1)
+        if feedback.isCanceled():
+            return {}
 
-            # Add a feature in the sink
-            sink.addFeature(feature, QgsFeatureSink.FastInsert)
+        # Criar os pontos dentro de cada uma das intersecções
 
-            # Update the progress bar
-            feedback.setProgress(int(current * total))
+        inside_points = []
+        for feat in geom_collection.getFeatures():
+            extent = feat.geometry().boundingBox()
+            grid = processing.run(
+                'native:creategrid',
+                {
+                    'TYPE': 2,  # Points
+                    'EXTENT': extent,
+                    'HSPACING': 200,
+                    'VSPACING': 200,
+                    'CRS': crs,
+                    'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+                }
+            )['OUTPUT']
+            for point in grid.getFeatures():
+                if feat.geometry().contains(point.geometry()):
+                    inside_points.append(point)
 
-        # Return the results of the algorithm. In this case our only result is
-        # the feature sink which contains the processed features, but some
-        # algorithms may return multiple feature sinks, calculated numeric
-        # statistics, etc. These should all be included in the returned
-        # dictionary, with keys matching the feature corresponding parameter
-        # or output names.
-        return {self.OUTPUT: dest_id}
+        final_points = QgsVectorLayer('Point?crs={}'.format(crs.authid()), 'final_points', 'memory')
+        final_points_data = final_points.dataProvider()
+        final_points_data.addFeatures(inside_points)
+        final_points.updateExtents()
+        outputs['Pontos do grid'] = final_points_data 
+
+        feedback.setCurrentStep(2)
+        if feedback.isCanceled():
+            return {}
+
+
+        # Filtrando pontos
+        alg_params = {
+            'GRID_SIZE': None,
+            'INPUT': outputs['Pontos do grid'],
+            'INPUT_FIELDS': [''],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OVERLAY': geom_collection,
+            'OVERLAY_FIELDS': [''],
+            'OVERLAY_FIELDS_PREFIX': '',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['FiltrandoPontos'] = processing.run('native:intersection', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(3)
+        if feedback.isCanceled():
+            return {}
+
+
+        # Extraindo o Z da geometria
+        alg_params = {
+            'FIELD_LENGTH': 0,
+            'FIELD_NAME': 'ZRef',
+            'FIELD_PRECISION': 0,
+            'FIELD_TYPE': 0,  # Decimal (double)
+            'FORMULA': '$z',
+            'INPUT': outputs['FiltrandoPontos'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['ExtraindoOZDaGeometria'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(4)
+        if feedback.isCanceled():
+            return {}
+
+        # Extraindo valores do raster
+        alg_params = {
+            'COLUMN_PREFIX': 'ZRast',
+            'INPUT': outputs['ExtraindoOZDaGeometria']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'RASTERCOPY': parameters['mdes'],
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['ExtraindoValoresDoRaster'] = processing.run('native:rastersampling', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(5)
+        if feedback.isCanceled():
+            return {}
+
+        # Calculando o Erro
+        alg_params = {
+            'FIELD_LENGTH': 0,
+            'FIELD_NAME': 'Erro',
+            'FIELD_PRECISION': 0,
+            'FIELD_TYPE': 0,  # Decimal (double)
+            'FORMULA': '"ZRef"-"ZRast1"',
+            'INPUT': outputs['ExtraindoValoresDoRaster']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['CalculandoOErro'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(6)
+        if feedback.isCanceled():
+            return {}
+
+        # EMQz
+        alg_params = {
+            'FIELD_LENGTH': 0,
+            'FIELD_NAME': 'EMQz',
+            'FIELD_PRECISION': 2,
+            'FIELD_TYPE': 0,  # Decimal (double)
+            'FORMULA': '(mean("Erro","name"))^2',
+            'INPUT': outputs['CalculandoOErro']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['Emqz'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(7)
+        if feedback.isCanceled():
+            return {}
+
+
+        results['multi_polygon'] = outputs['Emqz']['OUTPUT']
+        return results
 
     def name(self):
         """
@@ -130,7 +259,7 @@ class Projeto1SolucaoComplementar(QgsProcessingAlgorithm):
         lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        return 'Solução Complementar do Projeto 1'
+        return 'Solução complementar do Projeto 1'
 
     def displayName(self):
         """
