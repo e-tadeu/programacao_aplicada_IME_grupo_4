@@ -34,13 +34,19 @@ __revision__ = '$Format:%H$'
 
 
 from qgis.PyQt.QtCore import QCoreApplication
+from qgis.PyQt.Qt import QVariant
 from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterFeatureSink,
                        QgsProcessingMultiStepFeedback,
                        QgsProcessingParameterVectorLayer,
                        QgsProcessingParameterRasterLayer,
-                       QgsExpression)
+                       QgsExpression,
+                       QgsFields,
+                       QgsFeature,
+                       QgsField,
+                       QgsGeometry,
+                       QgsPointXY)
 import processing
 
 
@@ -55,44 +61,43 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
 
-    OUTPUT = 'OUTPUT'
-    INPUT = 'INPUT'
+    DRENAGENS = 'DRENAGENS'
+    VERTSUMI = 'VERTSUMI'
+    MASSASDAGUA = 'MASSASDAGUA'
+    #OCEAN_LAYER = 'OCEAN_LAYER'
+    #DITCH_LAYER = 'DITCH_LAYER'
+    FLAGPOINT = 'FLAGPOINT'
+    FLAGLINE = 'FLAGLINE'
+    FLAGPOLYGON = 'FLAGPOLYGON'
 
     def initAlgorithm(self, config):
 
         # Camadas de Entrada.
-        self.addParameter(QgsProcessingParameterVectorLayer('sumidouros', 'Sumidouros', 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.VERTSUMI, self.tr('Sumidouros e vertedouros'), 
                                                             types=[QgsProcessing.TypeVectorPoint], 
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('vertedouros', 'Vertedouros', 
-                                                            types=[QgsProcessing.TypeVectorPoint], 
-                                                            defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('drenagens', 'Drenagens', 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.DRENAGENS, self.tr('Drenagens'), 
                                                             types=[QgsProcessing.TypeVectorLine], 
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('canais', 'Canais', 
-                                                            types=[QgsProcessing.TypeVectorLine], 
-                                                            defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('massa-dagua-sf', 'Massa de Agua sem fluxo', 
-                                                            types=[QgsProcessing.TypeVectorPolygon], 
-                                                            defaultValue=None))
-
-        self.addParameter(QgsProcessingParameterVectorLayer('massa-dagua-cf', 'Massa de Agua com fluxo', 
+        #self.addParameter(QgsProcessingParameterVectorLayer('canais', 'Canais', 
+        #                                                    types=[QgsProcessing.TypeVectorLine], 
+        #                                                    defaultValue=None))
+        self.addParameter(QgsProcessingParameterVectorLayer(self.MASSASDAGUA, self.tr('Massas de Agua'), 
                                                             types=[QgsProcessing.TypeVectorPolygon], 
                                                             defaultValue=None))
         
           # Camada de Saida.
-        self.addParameter(QgsProcessingParameterFeatureSink('flagpoint', 'Erros pontuais', 
+        self.addParameter(QgsProcessingParameterFeatureSink(self.FLAGPOINT, self.tr('Erros pontuais'), 
                                                             type=QgsProcessing.TypeVectorPoint, 
                                                             createByDefault=True, 
                                                             supportsAppend=True, 
                                                             defaultValue='TEMPORARY_OUTPUT'))
-        self.addParameter(QgsProcessingParameterFeatureSink('flagline', 'Erros lineares', 
+        self.addParameter(QgsProcessingParameterFeatureSink(self.FLAGLINE, self.tr('Erros lineares'), 
                                                             type=QgsProcessing.TypeVectorLine, 
                                                             createByDefault=True, 
                                                             supportsAppend=True, 
                                                             defaultValue='TEMPORARY_OUTPUT'))
-        self.addParameter(QgsProcessingParameterFeatureSink('flagpolygon', 'Erros zonais', 
+        self.addParameter(QgsProcessingParameterFeatureSink(self.FLAGPOLYGON, self.tr('Erros zonais'), 
                                                             type=QgsProcessing.TypeVectorPolygon, 
                                                             createByDefault=True, 
                                                             supportsAppend=True, 
@@ -103,29 +108,69 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         """
         Here is where the processing itself takes place.
         """
+        pontos = self.parameterAsVectorLayer(parameters, self.VERTSUMI, context)
+        drenagens = self.parameterAsVectorLayer(parameters, self.DRENAGENS, context)
 
+        sinkFields = QgsFields()
+        sinkFields.append(QgsField('ERRO', QVariant.String))
+        (outputSink, outputDestId) = self.parameterAsSink(
+                parameters,
+                'FLAGPOINT',
+                context,
+                sinkFields,
+                1,
+                drenagens.sourceCrs()
+            )
+        
+        def addFeatureError(sinkFields, geometry, errorText):
+            errorFeat = QgsFeature(sinkFields)
+            errorFeat.setGeometry(geometry)
+            errorFeat.setAttribute('ERRO', errorText)
+            return errorFeat
+        
         # Retrieve the feature source and sink. The 'dest_id' variable is used
         # to uniquely identify the feature sink, and must be included in the
         # dictionary returned by the processAlgorithm function.
-        source = self.parameterAsSource(parameters, self.INPUT, context)
-        (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT,
-                context, source.fields(), source.wkbType(), source.sourceCrs())
+        #source = self.parameterAsSource(parameters, self.INPUT, context)
+        #(sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT,
+        #        context, source.fields(), source.wkbType(), source.sourceCrs())
 
         # Compute the number of steps to display within the progress bar and
         # get features from source
-        total = 100.0 / source.featureCount() if source.featureCount() else 0
-        features = source.getFeatures()
+        #total = 100.0 / source.featureCount() if source.featureCount() else 0
+        #features = source.getFeatures()
 
-        for current, feature in enumerate(features):
+        attributesError = 0
+        for ponto in pontos.getFeatures():
+            pontoGeometry = ponto.geometry()
+            noError = False
+            for line in drenagens.getFeatures():
+                lineGeometry = line.geometry()
+                for part in lineGeometry.parts():
+                    vertices = list(part)
+                    for i in range(len(vertices)-1):
+                        point = QgsGeometry.fromPointXY(QgsPointXY(vertices[i].x(), vertices[i].y()))
+                        if pontoGeometry.intersects(point): noError = True
+            if noError:
+                outputSink.addFeature(addFeatureError(
+                    sinkFields,
+                    pontoGeometry,
+                    'O sumidouro/vertedouro não está relacionado com uma drenagem.'))
+                attributesError = attributesError + 1
+
+        feedback.pushInfo(f"8. Há {attributesError} vertedouros/sumidouros isolados!")
+
+
+        #for current, feature in enumerate(features):
             # Stop the algorithm if cancel button has been clicked
-            if feedback.isCanceled():
-                break
+        #    if feedback.isCanceled():
+        #        break
 
             # Add a feature in the sink
-            sink.addFeature(feature, QgsFeatureSink.FastInsert)
+        #    sink.addFeature(feature, QgsFeatureSink.FastInsert)
 
             # Update the progress bar
-            feedback.setProgress(int(current * total))
+        #    feedback.setProgress(int(current * total))
 
         # Return the results of the algorithm. In this case our only result is
         # the feature sink which contains the processed features, but some
@@ -133,7 +178,7 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         # statistics, etc. These should all be included in the returned
         # dictionary, with keys matching the feature corresponding parameter
         # or output names.
-        return {self.OUTPUT: dest_id}
+        #return {self.OUTPUT: dest_id}
 
     def name(self):
         """
