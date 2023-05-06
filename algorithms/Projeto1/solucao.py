@@ -44,7 +44,7 @@ from qgis.core import (QgsProcessing,
 import processing
 
 
-class Projeto1Solucaocomplementar(QgsProcessingAlgorithm):
+class Projeto1Solucao(QgsProcessingAlgorithm):
     """
     This is an algorithm that takes a vector layer and
     creates a new identical one.
