@@ -60,6 +60,8 @@ class ProgramacaoAplicadaGrupo4Provider(QgsProcessingProvider):
         """
         self.addAlgorithm(Projeto1Solucao())
         self.addAlgorithm(Projeto1SolucaoComplementar())
+        self.addAlgorithm(Projeto2Solucao())
+        self.addAlgorithm(Projeto2SolucaoComplementar())
 
         # add additional algorithms here
         # self.addAlgorithm(MyOtherAlgorithm())
