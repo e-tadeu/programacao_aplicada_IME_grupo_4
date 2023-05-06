@@ -44,7 +44,7 @@ from qgis.core import (QgsProcessing,
 import processing
 
 
-class Projeto2Solucao(QgsProcessingAlgorithm):
+class Projeto2SolucaoComplementar(QgsProcessingAlgorithm):
     """
     
     Este algoritmo realiza verificações topologicas em conjuntos de dados de recursos hidricos.
