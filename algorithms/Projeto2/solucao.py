@@ -140,6 +140,9 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         #total = 100.0 / source.featureCount() if source.featureCount() else 0
         #features = source.getFeatures()
 
+        # ***********************************************************************
+        # 8 Vertedouros e sumidouros não relacionados com uma drenagem (isolados)
+        # ***********************************************************************
         attributesError = 0
         for ponto in pontos.getFeatures():
             pontoGeometry = ponto.geometry()
