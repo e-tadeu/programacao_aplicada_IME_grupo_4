@@ -37,6 +37,8 @@ from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterFeatureSink,
+                       QgsProcessingException,
+                       QgsWkbTypes,
                        QgsProcessingMultiStepFeedback,
                        QgsProcessingParameterVectorLayer,
                        QgsProcessingParameterRasterLayer,
@@ -55,44 +57,49 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
 
-    OUTPUT = 'OUTPUT'
-    INPUT = 'INPUT'
+    # INPUTS 
+    INPUT_DRAINAGES = 'INPUT_DRAINAGES'
+    SINK_SPILL_LAYER = 'SINK_SPILL_LAYER'
+    WATER_BODY = 'WATER_BODY'
+    DITCH_LAYER = 'DITCH_LAYER'
+    # OUTPUTS
+    POINT_FLAGS = 'POINT_FLAGS'
+    LINE_FLAGS = 'LINE_FLAGS'
+    POLYGON_FLAGS = 'POLYGON_FLAGS'
 
     def initAlgorithm(self, config):
 
         # Camadas de Entrada.
-        self.addParameter(QgsProcessingParameterVectorLayer('sumidouros', 'Sumidouros', 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.INPUT_DRAINAGES, 
+                                                            'Drenagens',
                                                             types=[QgsProcessing.TypeVectorPoint], 
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('vertedouros', 'Vertedouros', 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.SINK_SPILL_LAYER, 'Sumidouros e Vertedouros', 
                                                             types=[QgsProcessing.TypeVectorPoint], 
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('drenagens', 'Drenagens', 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.DITCH_LAYER, 'Canais', 
                                                             types=[QgsProcessing.TypeVectorLine], 
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('canais', 'Canais', 
-                                                            types=[QgsProcessing.TypeVectorLine], 
-                                                            defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('massa-dagua-sf', 'Massa de Agua sem fluxo', 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.WATER_BODY_WITHOUT_FLOW_LAYER, 'Massa de Agua sem fluxo', 
                                                             types=[QgsProcessing.TypeVectorPolygon], 
                                                             defaultValue=None))
 
-        self.addParameter(QgsProcessingParameterVectorLayer('massa-dagua-cf', 'Massa de Agua com fluxo', 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.WATER_BODY, 'Massa de Agua com fluxo', 
                                                             types=[QgsProcessing.TypeVectorPolygon], 
                                                             defaultValue=None))
         
           # Camada de Saida.
-        self.addParameter(QgsProcessingParameterFeatureSink('flagpoint', 'Erros pontuais', 
+        self.addParameter(QgsProcessingParameterFeatureSink(self.POINT_FLAGS, 'Erros pontuais', 
                                                             type=QgsProcessing.TypeVectorPoint, 
                                                             createByDefault=True, 
                                                             supportsAppend=True, 
                                                             defaultValue='TEMPORARY_OUTPUT'))
-        self.addParameter(QgsProcessingParameterFeatureSink('flagline', 'Erros lineares', 
+        self.addParameter(QgsProcessingParameterFeatureSink(self.LINE_FLAGS, 'Erros lineares', 
                                                             type=QgsProcessing.TypeVectorLine, 
                                                             createByDefault=True, 
                                                             supportsAppend=True, 
                                                             defaultValue='TEMPORARY_OUTPUT'))
-        self.addParameter(QgsProcessingParameterFeatureSink('flagpolygon', 'Erros zonais', 
+        self.addParameter(QgsProcessingParameterFeatureSink(self.POLYGON_FLAGS, 'Erros zonais', 
                                                             type=QgsProcessing.TypeVectorPolygon, 
                                                             createByDefault=True, 
                                                             supportsAppend=True, 
@@ -103,6 +110,101 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         """
         Here is where the processing itself takes place.
         """
+        # Armazena as camadas de entrada em variaveis
+
+        inputDrainagesLyr = self.parameterAsLayer(parameters, self.INPUT_DRAINAGES, context)
+        if inputDrainagesLyr is None:
+            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_DRAINAGES))
+        waterSinkSpillLayer = self.parameterAsLayer(parameters, self.SINK_SPILL_LAYER, context)
+        waterBody = self.parameterAsLayer(parameters, self.WATER_BODY, context)
+        ditchLyr = self.parameterAsLayer(parameters, self.DITCH_LAYER, context)
+
+        # Definindo os camadas d'agua com ou sem fluxo
+        waterBodyWithoutFlow = processing.run("native:filter", {
+            'INPUT': waterBody,
+            'EXPRESSION': "possuitrechodrenagem = 0",
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)['OUTPUT']
+
+        waterBodyWithFlow = processing.run("native:filter", {
+            'INPUT': waterBody,
+            'EXPRESSION': "possuitrechodrenagem = 1",
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)['OUTPUT']
+
+        # Definindo Vertedouros e Sumidouros
+        # Sumidouro
+        waterSinkLayer = processing.run("native:filter", {
+            'INPUT': waterSinkSpillLayer,
+            'EXPRESSION': "tipodrenagem = 1",
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)['OUTPUT']
+
+        # Vertedouro
+        waterSpillLayer = processing.run("native:filter", {
+            'INPUT': waterSinkSpillLayer,
+            'EXPRESSION': "tiposumvert = 2",
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)['OUTPUT']
+
+        # Definindo o oceano
+        oceanLyr = processing.run("native:filter", {
+            'INPUT': waterBody,
+            'EXPRESSION': "tipomassadagua = 3",
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)['OUTPUT']
+
+        # Definir os outputs
+        (self.pointFlagSink, self.point_flag_id) = self.prepareAndReturnFlagSink(
+            parameters,
+            inputDrainagesLyr,
+            QgsWkbTypes.Point,
+            context,
+            self.POINT_FLAGS
+        )
+        (self.lineFlagSink, self.line_flag_id) = self.prepareAndReturnFlagSink(
+            parameters,
+            inputDrainagesLyr,
+            QgsWkbTypes.LineString,
+            context,
+            self.LINE_FLAGS
+        )
+        (self.polygonFlagSink, self.polygon_flag_id) = self.prepareAndReturnFlagSink(
+            parameters,
+            inputDrainagesLyr,
+            QgsWkbTypes.Polygon,
+            context,
+            self.POLYGON_FLAGS
+        )
+
+        # Algoritmo 1
+        
+        # Algoritmo 4
+
+        if oceanLyr is not None:
+            multiStepFeedback.setCurrentStep(currentStep)
+            self.validateIntersection(
+                lyrA=startPointsLyr,
+                lyrB=oceanLyr,
+                flagText=self.tr('Drainage starting in the ocean.'),
+                context=context,
+                feedback=multiStepFeedback
+            )
+            multiStepFeedback.setCurrentStep(currentStep)
+            self.validateDrainagesWithWaterBody(
+                cachedDrainagesLyr,
+                oceanLyr,
+                startPointDict=startPointDict,
+                endPointDict=endPointDict,
+                waterBodyName=self.tr('ocean'),
+                feedback=multiStepFeedback,
+                withFlow=False,
+            )
+            currentStep += 1
+        
+
+
+
 
         # Retrieve the feature source and sink. The 'dest_id' variable is used
         # to uniquely identify the feature sink, and must be included in the
@@ -134,6 +236,9 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         # dictionary, with keys matching the feature corresponding parameter
         # or output names.
         return {self.OUTPUT: dest_id}
+    
+    def getFlagFields(self):
+        fields = QgsFields()
 
     def name(self):
         """
