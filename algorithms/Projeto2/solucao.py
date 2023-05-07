@@ -393,6 +393,33 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         )
         list(map(flagLambda, InvalidIntersection_water_body.getFeatures()))
 
+        # Algoritmo 7
+
+        # Iremos validar se algum canal não coincide com trechos de drenagem.
+        
+        
+        InvalidIntersection_ditch = processing.run(
+            "native:extractbylocation",
+            {
+                'INPUT': ditchLyr,
+                'INTERSECT': drainagesLyr,
+                'PREDICATE': 2, #Touches
+                'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+            },
+            context=context,
+            feedback=feedback,
+        )
+
+        InvalidIntersection_ditch = InvalidIntersection_ditch['OUTPUT']
+
+        flagText = 'Canal sem drenagem coincidente.'
+        flagLambda = lambda x: self.flagFeature(
+            x.geometry(),
+            flagText=flagText,
+            sink=self.lineFlagSink
+        )
+        list(map(flagLambda, InvalidIntersection_ditch.getFeatures()))
+
         # # Retrieve the feature source and sink. The 'dest_id' variable is used
         # # to uniquely identify the feature sink, and must be included in the
         # # dictionary returned by the processAlgorithm function.
