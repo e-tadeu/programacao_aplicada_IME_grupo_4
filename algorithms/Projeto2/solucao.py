@@ -131,6 +131,25 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         feedback.pushInfo(f"2. Há {attributesError} drenagens que iniciam num sumidouro!")
 
         # ***********************************************************************
+        # 3 Drenagens que finalizam em vertedouro
+        # ***********************************************************************
+        attributesError = 0
+        for ponto in pontos.getFeatures():
+            tipo = ponto.attributes()[4]
+            if tipo == 0:
+                pontoGeometry = ponto.geometry()
+                for line in drenagens.getFeatures():
+                    lineGeometry = line.geometry()
+                    nome = line.attributes()[1]
+                    for part in lineGeometry.parts():
+                        vertices = list(part)
+                        initialPoint = QgsGeometry.fromPointXY(QgsPointXY(vertices[0].x(), vertices[0].y()))
+                        if initialPoint.equals(pontoGeometry):
+                            feedback.pushInfo(f"A drenagem {nome} inicia num sumidouro!")
+                            attributesError += 1
+        feedback.pushInfo(f"2. Há {attributesError} drenagens que iniciam num sumidouro!")
+
+        # ***********************************************************************
         # 5 Massa d’água com fluxo sem drenagem interna
         # ***********************************************************************
         attributesError = 0
