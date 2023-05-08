@@ -46,7 +46,6 @@ import processing
 
 class Projeto2SolucaoComplementar(QgsProcessingAlgorithm):
     """
-    
     Este algoritmo realiza verificações topologicas em conjuntos de dados de recursos hidricos.
 
     """
@@ -55,64 +54,154 @@ class Projeto2SolucaoComplementar(QgsProcessingAlgorithm):
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
 
-    OUTPUT = 'OUTPUT'
-    INPUT = 'INPUT'
-
-    def initAlgorithm(self, config):
-
-        # Camadas de Entrada.
-                                                
-        self.addParameter(QgsProcessingParameterVectorLayer('drenagens', 'Drenagens', 
+    def initAlgorithm(self, config=None):
+        #Entradas
+        self.addParameter(QgsProcessingParameterVectorLayer('drenagem', 'Drenagem', 
                                                             types=[QgsProcessing.TypeVectorLine], 
-                                                            defaultValue=None)) 
-        self.addParameter(QgsProcessingParameterVectorLayer('massa-dagua', 'Massa de Agua', 
-                                                            types=[QgsProcessing.TypeVectorPolygon], 
+                                                            defaultValue=None))
+        self.addParameter(QgsProcessingParameterVectorLayer('massas_de_agua', 'Massas de Agua',
+                                                            types=[QgsProcessing.TypeVectorPolygon],
+                                                            defaultValue=None))
+        #Saida
+        self.addParameter(QgsProcessingParameterFeatureSink('Trecho_drenagens_ajust', 'Trecho_Drenagens_Ajust',
+                                                            type=QgsProcessing.TypeVectorAnyGeometry,
+                                                            createByDefault=True,
+                                                            supportsAppend=True,
                                                             defaultValue=None))
 
-        
-          # Camada de Saida.
-        self.addParameter(QgsProcessingParameterFeatureSink('drenagem-mod', 'Drenagem com atributo adicionado', 
-                                                            type=QgsProcessing.TypeVectorLine, 
-                                                            createByDefault=True, 
-                                                            supportsAppend=True, 
-                                                            defaultValue='TEMPORARY_OUTPUT'))
-        
-        
-    def processAlgorithm(self, parameters, context, feedback):
-        """
-        Here is where the processing itself takes place.
-        """
+    def processAlgorithm(self, parameters, context, model_feedback):
+        # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
+        # overall progress through the model
+        feedback = QgsProcessingMultiStepFeedback(9, model_feedback)
+        results = {}
+        outputs = {}
 
-        # Retrieve the feature source and sink. The 'dest_id' variable is used
-        # to uniquely identify the feature sink, and must be included in the
-        # dictionary returned by the processAlgorithm function.
-        source = self.parameterAsSource(parameters, self.INPUT, context)
-        (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT,
-                context, source.fields(), source.wkbType(), source.sourceCrs())
+        # Indices Espaciais Massas de Agua
+        alg_params = {
+            'INPUT': parameters['massas_de_agua']
+        }
+        outputs['IndicesEspaciaisMassasDeAgua'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
-        # Compute the number of steps to display within the progress bar and
-        # get features from source
-        total = 100.0 / source.featureCount() if source.featureCount() else 0
-        features = source.getFeatures()
+        feedback.setCurrentStep(1)
+        if feedback.isCanceled():
+            return {}
 
-        for current, feature in enumerate(features):
-            # Stop the algorithm if cancel button has been clicked
-            if feedback.isCanceled():
-                break
+        # Indices Espaciais Drenagens
+        alg_params = {
+            'INPUT': parameters['drenagem']
+        }
+        outputs['IndicesEspaciaisDrenagens'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
-            # Add a feature in the sink
-            sink.addFeature(feature, QgsFeatureSink.FastInsert)
+        feedback.setCurrentStep(2)
+        if feedback.isCanceled():
+            return {}
 
-            # Update the progress bar
-            feedback.setProgress(int(current * total))
+        # Intersecao 
+        alg_params = {
+            'GRID_SIZE': None,
+            'INPUT': outputs['IndicesEspaciaisDrenagens']['OUTPUT'],
+            'INPUT_FIELDS': [''],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OVERLAY': outputs['IndicesEspaciaisMassasDeAgua']['OUTPUT'],
+            'OVERLAY_FIELDS': ['null'],
+            'OVERLAY_FIELDS_PREFIX': '',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['Intersec'] = processing.run('native:intersection', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
-        # Return the results of the algorithm. In this case our only result is
-        # the feature sink which contains the processed features, but some
-        # algorithms may return multiple feature sinks, calculated numeric
-        # statistics, etc. These should all be included in the returned
-        # dictionary, with keys matching the feature corresponding parameter
-        # or output names.
-        return {self.OUTPUT: dest_id}
+        feedback.setCurrentStep(3)
+        if feedback.isCanceled():
+            return {}
+
+        # Diferenca simetrica
+        alg_params = {
+            'GRID_SIZE': None,
+            'INPUT': outputs['IndicesEspaciaisDrenagens']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OVERLAY': outputs['Intersec']['OUTPUT'],
+            'OVERLAY_FIELDS_PREFIX': '',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['DiferencaSimetrica'] = processing.run('native:symmetricaldifference', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(4)
+        if feedback.isCanceled():
+            return {}
+
+        # Coluna Temporaria Verdadeira
+        alg_params = {
+            'FIELD_LENGTH': 0,
+            'FIELD_NAME': 'Col_Temp_True',
+            'FIELD_PRECISION': 0,
+            'FIELD_TYPE': 6,  # Booleano
+            'FORMULA': 'true',
+            'INPUT': outputs['Intersec']['OUTPUT'],
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['ColunaTemporriaVerdadeira'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(5)
+        if feedback.isCanceled():
+            return {}
+
+        # Uniao
+        alg_params = {
+            'GRID_SIZE': None,
+            'INPUT': outputs['DiferencaSimetrica']['OUTPUT'],
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'OVERLAY': outputs['Intersec']['OUTPUT'],
+            'OVERLAY_FIELDS_PREFIX': '',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['Uniao'] = processing.run('native:union', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(6)
+        if feedback.isCanceled():
+            return {}
+
+        # Associar atributos por localizacao
+        alg_params = {
+            'DISCARD_NONMATCHING': False,
+            'INPUT': outputs['Uniao']['OUTPUT'],
+            'JOIN': outputs['ColunaTemporriaVerdadeira']['OUTPUT'],
+            'JOIN_FIELDS': [''],
+            'METHOD': 1,  # Tomar atributos apenas da primeira feicao coincidente (uma-por-uma)
+            'NON_MATCHING': None,
+            'PREDICATE': [2],  # igual
+            'PREFIX': '',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['AssociarAtributosPorLocalizao'] = processing.run('native:joinattributesbylocation', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(7)
+        if feedback.isCanceled():
+            return {}
+
+        # Criacao da Coluna Final
+        alg_params = {
+            'FIELD_LENGTH': 0,
+            'FIELD_NAME': 'dentro_de_poligono',
+            'FIELD_PRECISION': 0,
+            'FIELD_TYPE': 6,  # Booleano
+            'FORMULA': 'if("Col_Temp_True" = true,true,false)',
+            'INPUT': outputs['AssociarAtributosPorLocalizao']['OUTPUT'],
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['CriacaoDaColunaFinal'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(8)
+        if feedback.isCanceled():
+            return {}
+
+        # Descartar coluna temporaria
+        alg_params = {
+            'COLUMN': ['Col_Temp_True'],
+            'INPUT': outputs['CriacaoDaColunaFinal']['OUTPUT'],
+            'OUTPUT': parameters['Trecho_drenagens_ajust']
+        }
+        outputs['DelColTemp'] = processing.run('native:deletecolumn', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        results['Trecho_drenagens_ajust'] = outputs['DelColTemp']['OUTPUT']
+        return results
 
     def name(self):
         """
@@ -153,3 +242,5 @@ class Projeto2SolucaoComplementar(QgsProcessingAlgorithm):
 
     def createInstance(self):
         return Projeto2SolucaoComplementar()
+    
+  
