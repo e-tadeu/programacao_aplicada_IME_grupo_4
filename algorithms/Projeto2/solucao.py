@@ -32,17 +32,26 @@ __copyright__ = '(C) 2023 by Grupo 4'
 
 __revision__ = '$Format:%H$'
 
-
 from code import interact
 from qgis.PyQt.QtCore import QCoreApplication
-from qgis.PyQt.Qt import QVariant
+from qgis.PyQt.Qt import QVariant, QCoreApplication
 from qgis.core import (QgsProcessing,
+                       QgsProject,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterFeatureSink,
+                       QgsProcessingException,
+                       QgsWkbTypes,
+                       QgsPointXY,
+                       QgsSpatialIndex,
+                       QgsFeatureSink,
+                       QgsFields,
+                       QgsField,
+                       QgsFeature,
+                       QgsGeometry,
+                       QgsExpression,
+                       QgsVectorLayer,
                        QgsProcessingMultiStepFeedback,
                        QgsProcessingParameterVectorLayer,
-                       QgsProcessingParameterRasterLayer,
-                       QgsExpression,
                        QgsFields,
                        QgsFeature,
                        QgsField,
@@ -62,9 +71,13 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
 
+    # Camadas de input
     DRENAGENS = 'DRENAGENS'
     VERTSUMI = 'VERTSUMI'
     MASSASDAGUA = 'MASSASDAGUA'
+    CANAIS = 'CANAIS'
+    
+    # Camadas de output
     FLAGPOINT = 'FLAGPOINT'
     FLAGLINE = 'FLAGLINE'
     FLAGPOLYGON = 'FLAGPOLYGON'
@@ -78,9 +91,9 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterVectorLayer(self.DRENAGENS, self.tr('Drenagens'), 
                                                             types=[QgsProcessing.TypeVectorLine], 
                                                             defaultValue=None))
-        #self.addParameter(QgsProcessingParameterVectorLayer('canais', 'Canais', 
-        #                                                    types=[QgsProcessing.TypeVectorLine], 
-        #                                                    defaultValue=None))
+        self.addParameter(QgsProcessingParameterVectorLayer(self.CANAIS, self.tr('Canais'), 
+                                                           types=[QgsProcessing.TypeVectorLine], 
+                                                           defaultValue=None))
         self.addParameter(QgsProcessingParameterVectorLayer(self.MASSASDAGUA, self.tr('Massas de Agua'), 
                                                             types=[QgsProcessing.TypeVectorPolygon], 
                                                             defaultValue=None))
@@ -107,13 +120,184 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         """
         Here is where the processing itself takes place.
         """
-        pontos = self.parameterAsVectorLayer(parameters, self.VERTSUMI, context)
-        drenagens = self.parameterAsVectorLayer(parameters, self.DRENAGENS, context)
-        massas = self.parameterAsVectorLayer(parameters, self.MASSASDAGUA, context)
+        # Armazena as camadas de entrada em variaveis
+
+        drenagens = self.parameterAsVectorLayer(parameters, self.INPUT_DRAINAGES, context)
+        pontos = self.parameterAsVectorLayer(parameters, self.SINK_SPILL_LAYER, context)
+        massas = self.parameterAsVectorLayer(parameters, self.WATER_BODY, context)
+        canais = self.parameterAsVectorLayer(parameters, self.DITCH_LAYER, context)
+        
+        # Definindo os camadas d'agua com ou sem fluxo
+
+        # Sem fluxo
+        waterBodyWithoutFlow = massas.clone()
+        # Definindo o filtro
+        filtro = QgsExpression('possuitrechodrenagem = 0')
+        waterBodyWithoutFlow.setSubsetString(filtro.expression())
+
+        # Com fluxo
+        waterBodyWithFlow = massas.clone()
+        # Definindo o filtro
+        filtro = QgsExpression('possuitrechodrenagem = 1')
+        waterBodyWithFlow.setSubsetString(filtro.expression())
+
+        # Definindo Vertedouros e Sumidouros
+        # Sumidouro
+        waterSinkLayer = pontos.clone()
+        # Definindo o filtro
+        filtro = QgsExpression('tiposumvert = 1')
+        waterSinkLayer.setSubsetString(filtro.expression())
+
+        # Vertedouro
+        waterSpillLayer = pontos.clone()
+        # Definindo o filtro
+        filtro = QgsExpression('tiposumvert = 2')
+        waterSpillLayer.setSubsetString(filtro.expression())
+
+        # Oceano
+        oceanLyr = massas.clone()
+        # Definindo o filtro
+        filtro = QgsExpression('tipomassadagua = 3')
+        oceanLyr.setSubsetString(filtro.expression())
+
+        
+        # Definindo as variáveis do tipo flag de pontos, linhas e polygonos que serão o output do nosso código
+
+        (self.pointFlagSink, self.point_flag_id) = self.prepareAndReturnFlagSink(
+            parameters,
+            drenagens,
+            QgsWkbTypes.Point,
+            context,
+            self.FLAGPOINT
+        )
+        (self.lineFlagSink, self.line_flag_id) = self.prepareAndReturnFlagSink(
+            parameters,
+            drenagens,
+            QgsWkbTypes.LineString,
+            context,
+            self.FLAGLINE
+        )
+        (self.polygonFlagSink, self.polygon_flag_id) = self.prepareAndReturnFlagSink(
+            parameters,
+            drenagens,
+            QgsWkbTypes.Polygon,
+            context,
+            self.FLAGPOLYGON
+        )
+
+
+        # Algoritmo 1
+
+        # Iremos análisar o fluxo de drenagem.
+        # Iremos dividir os todo o layer em trechos de drenagens
+        # Criando uma camada temporaria para armazenar os trechos de drenagens
+        drainagesLyr = processing.run("native:multiparttosingleparts", {
+            'INPUT': drenagens,
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)
+        drainagesLyr = drainagesLyr['OUTPUT']
+        #Agora iremos dividir os trechos de drenagens em subtrechos
+        subdrainagesLyr = processing.run("native:multiparttosingleparts", {
+            'INPUT': drainagesLyr,
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)
+        subdrainagesLyr = subdrainagesLyr['OUTPUT']
+        
+        # Criar um dicionário para armazenar a contagem de ocorrências de cada nó e o nó em si
+        nosCountDict = {}
+
+        # Iterar sobre os subtrechos
+        for subfeat in subdrainagesLyr.getFeatures():
+            subtrecho = subfeat['id']
+            startGeom = subfeat.geometry().asPolyline()[0]
+            endGeom = subfeat.geometry().asPolyline()[-1]
+            startPoint = (startGeom.x(), startGeom.y())
+            endPoint = (endGeom.x(), endGeom.y())
+
+            # Contar a ocorrência dos pontos iniciais
+            if startPoint not in nosCountDict:
+                nosCountDict[startPoint] = { "trechos entrando": 0, "trechos saindo": 0, "subtrechos": []}
+            
+            if endPoint not in nosCountDict:
+                nosCountDict[endPoint] = { "trechos entrando": 0, "trechos saindo": 0, "subtrechos": []}
+            
+            nosCountDict[startPoint]["trechos saindo"] += 1
+            nosCountDict[endPoint]["trechos entrando"] += 1
+            nosCountDict[startPoint]["subtrechos"].append(subtrecho)
+            nosCountDict[endPoint]["subtrechos"].append(subtrecho)
+
+        # Adicionar os nós compartilhados à camada
+        # Agora criaremos uma camada temporaria para armazenar os nós compartilhados
+        nosCompartilhadosLyr = QgsVectorLayer("Point?crs=epsg:4674", "nosCompartilhados", "memory")
+        prov = nosCompartilhadosLyr.dataProvider()
+        # Adicionando os campos
+        prov.addAttributes([QgsField("erro", QVariant.String)])
+        nosCompartilhadosLyr.updateFields()
+
+        # Definindo a camada de pontos dos canais de drenagem
+        subditchLyr = processing.run("native:multiparttosingleparts", {
+            'INPUT': canais,
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)
+        subditchLyr = subditchLyr['OUTPUT']
+
+        #Agora para esses trechos, queremos extrair os vértices iniciais de cada um deles.
+        #Para isso, iremos utilizar o algoritmo Extract Specific Vertices.
+        vertices_ditchs = processing.run("native:extractvertices", {
+            'INPUT': subditchLyr,
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)
+        vertices_ditchs = vertices_ditchs['OUTPUT']
+
+        dict_teste = {}
+        for ponto, contador in nosCountDict.items():
+            entrando = contador['trechos entrando']
+            saindo = contador['trechos saindo']
+            total = entrando + saindo
+            erro = ''
+            # Testar se o ponto é Sumidouro ou vertedouro
+            pertence = False
+            for feature in pontos.getFeatures():
+                ponto_sink = feature.geometry().asPoint()
+                if (ponto_sink.x(), ponto_sink.y()) == ponto:
+                    pertence = True
+                    break
+            for feature in vertices_ditchs.getFeatures():
+                ponto_ditchs = feature.geometry().asPoint()
+                if (ponto_ditchs.x(), ponto_ditchs.y()) == ponto:
+                    pertence = True
+                    break
+            
+            if (entrando == 0 and total > 1 and not pertence):
+                erro = 'Divergência de fluxo'
+                dict_teste[ponto] = contador['subtrechos']
+            elif (saindo == 0 and total > 1 and not pertence):
+                erro = 'Convergência de fluxo'
+                dict_teste[ponto] = contador['subtrechos']
+        
+            if erro != '':
+                # Adicionando os nós compartilhados
+                feat = QgsFeature()
+                feat.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(ponto[0], ponto[1])))
+                feat.setAttributes([erro])
+                prov.addFeatures([feat])
+        # Salvar a camada temporária como variável
+        #nosCompartilhadosLyr = QgsProject.instance().addMapLayer(nosCompartilhadosLyr)
+        nosCompartilhadosLyr.commitChanges()
+        # Adicionar a flag
+        flagText = 'Drenagens com fluxo incorreto'
+        flagLambda = lambda x: self.flagFeature(
+        x.geometry(),
+        flagText=flagText,
+        sink=self.pointFlagSink
+        )
+        teste = list(map(flagLambda, nosCompartilhadosLyr.getFeatures()))
+
 
         # ***********************************************************************
         # 2 Drenagens que iniciam em sumidouro
         # ***********************************************************************
+
         attributesError = 0
         for ponto in pontos.getFeatures():
             tipo = ponto.attributes()[4]
@@ -148,6 +332,50 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
                             feedback.pushInfo(f"A drenagem {nome} finaliza em um vertedouro!")
                             attributesError += 1
         feedback.pushInfo(f"2. Há {attributesError} drenagens finalizam em vertedouros!")
+        
+        # Algoritmo 4
+
+        # Iremos dividir os trechos de drenagens em linhas.
+        # Criando uma camada temporaria para armazenar os trechos de drenagens
+        drainagesLyr = processing.run("native:multiparttosingleparts", {
+            'INPUT': drenagens,
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)
+        drainagesLyr = drainagesLyr['OUTPUT']
+
+        #Agora para esses trechos, queremos extrair os vértices iniciais de cada um deles.
+        #Para isso, iremos utilizar o algoritmo Extract Specific Vertices.
+        startPointsLyr = processing.run("native:extractspecificvertices", {
+            'INPUT': drainagesLyr,
+            'VERTICES': 0,
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }, context=context, feedback=feedback)
+        startPointsLyr = startPointsLyr['OUTPUT']
+
+        # Agora iremos armazenar as intersecções entre dreangens e oceano.
+        InvalidIntersection = processing.run(
+            "native:extractbylocation",
+            {
+                'INPUT': startPointsLyr,
+                'INTERSECT': oceanLyr,
+                'PREDICATE': 0, #Intersects
+                'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+            },
+            context=context,
+            feedback=feedback,
+        )
+        InvalidIntersection = InvalidIntersection['OUTPUT']
+
+        # Agora iremos armazenar o erro de intersecção entre drenagem e oceano.
+        flagText = 'Drenagem começando no oceano.'
+
+        flagLambda = lambda x: self.flagFeature(
+            x.geometry(),
+            flagText=flagText,
+            sink=self.pointFlagSink
+        )
+        list(map(flagLambda, InvalidIntersection.getFeatures()))
+        teste_2 = list(map(flagLambda, InvalidIntersection.getFeatures()))
 
         # ***********************************************************************
         # 5 Massa d’água com fluxo sem drenagem interna
@@ -168,7 +396,65 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         feedback.pushInfo(f"5. Há {attributesError} massas de água com fluxo sem drenagem interna!")
 
 
-        # ***********************************************************************
+        
+        # Algoritmo 6
+
+        # Iremos validar a intersecção das drenagens com as massa d'água que estão indicadas como sem drenagem.
+        
+        InvalidIntersection_water_body = processing.run(
+            "native:extractbylocation",
+            {
+                'INPUT': waterBodyWithoutFlow,
+                'INTERSECT': drainagesLyr,
+                'PREDICATE': 1, #Touches
+                'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+            },
+            context=context,
+            feedback=feedback,
+        )
+
+        InvalidIntersection_water_body = InvalidIntersection_water_body['OUTPUT']
+
+        flagText = 'Massas d\'água sem drenagem que intersectam com drenagens.'
+        flagLambda = lambda x: self.flagFeature(
+            x.geometry(),
+            flagText=flagText,
+            sink=self.polygonFlagSink
+        )
+        list(map(flagLambda, InvalidIntersection_water_body.getFeatures()))
+
+       
+
+
+
+        # Algoritmo 7
+
+        # Iremos validar se algum canal não coincide com trechos de drenagem.
+        
+        
+        InvalidIntersection_ditch = processing.run(
+            "native:extractbylocation",
+            {
+                'INPUT': ditchLyr,
+                'INTERSECT': drainagesLyr,
+                'PREDICATE': 2, #Touches
+                'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+            },
+            context=context,
+            feedback=feedback,
+        )
+
+        InvalidIntersection_ditch = InvalidIntersection_ditch['OUTPUT']
+
+        flagText = 'Canal sem drenagem coincidente.'
+        flagLambda = lambda x: self.flagFeature(
+            x.geometry(),
+            flagText=flagText,
+            sink=self.lineFlagSink
+        )
+        list(map(flagLambda, InvalidIntersection_ditch.getFeatures()))
+
+         # ***********************************************************************
         # 8 Vertedouros e sumidouros não relacionados com uma drenagem (isolados)
         # ***********************************************************************
         attributesError = 0
@@ -188,6 +474,41 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
                 attributesError += 1
 
         feedback.pushInfo(f"8. Há {attributesError} vertedouros/sumidouros isolados!")
+
+        # # Retrieve the feature source and sink. The 'dest_id' variable is used
+        # # to uniquely identify the feature sink, and must be included in the
+        # # dictionary returned by the processAlgorithm function.
+        # source = self.parameterAsSource(parameters, self.INPUT, context)
+        # (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT,
+        #         context, source.fields(), source.wkbType(), source.sourceCrs())
+
+        # # Compute the number of steps to display within the progress bar and
+        # # get features from source
+        # total = 100.0 / source.featureCount() if source.featureCount() else 0
+        # features = source.getFeatures()
+
+        # for current, feature in enumerate(features):
+        #     # Stop the algorithm if cancel button has been clicked
+        #     if feedback.isCanceled():
+        #         break
+
+        #     # Add a feature in the sink
+        #     sink.addFeature(feature, QgsFeatureSink.FastInsert)
+
+        #     # Update the progress bar
+        #     feedback.setProgress(int(current * total))
+
+        # # Return the results of the algorithm. In this case our only result is
+        # # the feature sink which contains the processed features, but some
+        # # algorithms may return multiple feature sinks, calculated numeric
+        # # statistics, etc. These should all be included in the returned
+        # # dictionary, with keys matching the feature corresponding parameter
+        # # or output names.
+        return {
+            self.FLAGPOINT: self.point_flag_id,
+            self.FLAGLINE: self.line_flag_id,
+            self.FLAGPOLYGON: self.polygon_flag_id,
+        }
 
     def name(self):
         """
@@ -222,6 +543,52 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         formatting characters.
         """
         return 'Projeto 2'
+
+    def getPointDict(self, pointLyr, idField):
+            pointDict = {}
+            for feature in pointLyr.getFeatures():
+                pointDict[feature[idField]] = feature.geometry().asPoint()
+            return pointDict
+
+    def prepareFlagSink(self, parameters, source, wkbType, context):
+        (self.flagSink, self.flag_id) = self.prepareAndReturnFlagSink(
+            parameters,
+            source,
+            wkbType,
+            context,
+            self.FLAGS
+            )
+
+    def prepareAndReturnFlagSink(self, parameters, source, wkbType, context, UI_FIELD):
+        flagFields = self.getFlagFields()
+        (flagSink, flag_id) = self.parameterAsSink(
+            parameters,
+            UI_FIELD,
+            context,
+            flagFields,
+            wkbType,
+            source.sourceCrs() if source is not None else QgsProject.instance().crs()
+        )
+        if flagSink is None:
+            raise QgsProcessingException(self.invalidSinkError(parameters, UI_FIELD))
+        return (flagSink, flag_id)
+    
+    def getFlagFields(self):
+        fields = QgsFields()
+        fields.append(QgsField('Motivo',QVariant.String))
+        return fields
+    
+    def flagFeature(self, flagGeom, flagText, sink=None):
+        """
+        Creates and adds to flagSink a new flag with the reason.
+        :param flagGeom: (QgsGeometry) geometry of the flag;
+        :param flagText: (string) Text of the flag
+        """
+        flagSink = self.flagSink if sink is None else sink
+        newFeat = QgsFeature(self.getFlagFields())
+        newFeat['Motivo'] = flagText
+        newFeat.setGeometry(flagGeom)
+        flagSink.addFeature(newFeat, QgsFeatureSink.FastInsert)
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
