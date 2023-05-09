@@ -353,42 +353,27 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
 
         flagText = 'Drenagens que iniciam em sumidouro'
 
-        #attributesError = 0
-        for line in drenagens.getFeatures():
-            lineGeometry = line.geometry()
-            # Obtemos o último vértice
-            vertices = lineGeometry.vertices()
-            for vertice in vertices:
-                ultimo_vertice = vertice
-                break
-            for ponto in pontos.getFeatures():
-                if ponto.attributes()[4] == 1: # Ponto é sumidouro
-                    pontoGeometry = ponto.geometry()
-                    if pontoGeometry.equals(QgsGeometry.fromPointXY(QgsPointXY(ultimo_vertice.x(), ultimo_vertice.y()))):
-                        self.flagFeature(
-                            lineGeometry,
-                            flagText=flagText,
-                            sink=self.lineFlagSink
+        attributesError = 0
+        for ponto in pontos.getFeatures():
+            tipo = ponto.attributes()[4]
+            if tipo == 1:
+                pontoGeometry = ponto.geometry()
+                for line in drenagens.getFeatures():
+                    lineGeometry = line.geometry()
+                    nome = line.attributes()[1]
+                    for part in lineGeometry.parts():
+                        vertices = list(part)
+                        initialPoint = QgsGeometry.fromPointXY(QgsPointXY(vertices[0].x(), vertices[0].y()))
+                        if initialPoint.equals(pontoGeometry):
+                            self.flagFeature(
+                                lineGeometry,
+                                flagText=flagText,
+                                sink=self.lineFlagSink
                             )
-        #                 #attributesError += 1
-        # for ponto in pontos.getFeatures():
-        #     tipo = ponto.attributes()[4]
-        #     if tipo == 1:
-        #         pontoGeometry = ponto.geometry()
-        #         for line in drenagens.getFeatures():
-        #             lineGeometry = line.geometry()
-        #             nome = line.attributes()[1]
-        #             for part in lineGeometry.vertices():
-        #                 vertices = list(part)
-        #                 initialPoint = QgsGeometry.fromPointXY(QgsPointXY(vertices[0].x(), vertices[0].y()))
-        #                 if initialPoint.equals(pontoGeometry):
-        #                     self.flagFeature(
-        #                         line.geometry(),
-        #                         flagText=flagText,
-        #                         sink=self.lineFlagSink
-        #                         )
-                            #attributesError += 1
-        #feedback.pushInfo(f"2. Há {attributesError} drenagens que iniciam num sumidouro!")
+                            feedback.pushInfo(f"A drenagem {nome} inicia num sumidouro!")
+                            attributesError += 1
+        feedback.pushInfo(f"2. Há {attributesError} drenagens que iniciam num sumidouro!")
+            
         feedback.setCurrentStep(3)
         if feedback.isCanceled():
             return {}
@@ -416,9 +401,11 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
                                 lineGeometry,
                                 flagText=flagText,
                                 sink=self.lineFlagSink
-                                )
+                            )
+                            feedback.pushInfo(f"A drenagem {nome} finaliza em um vertedouro!")
                             attributesError += 1
         feedback.pushInfo(f"3. Há {attributesError} drenagens finalizam em vertedouros!")
+
         
         feedback.setCurrentStep(4)
         if feedback.isCanceled():
