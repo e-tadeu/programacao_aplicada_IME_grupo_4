@@ -495,30 +495,6 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         feedback.setCurrentStep(6)
         if feedback.isCanceled():
             return {}
-        
-        # Iremos validar a intersecção das drenagens com as massa d'água que estão indicadas como sem drenagem.
-        
-        # not_intersects_water_body = processing.run(
-        #     "native:extractbylocation",
-        #     {
-        #         'INPUT': waterBodyWithFlow,
-        #         'INTERSECT': drainagesLyr,
-        #         'PREDICATE': [2],
-        #         'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        #     },
-        #     context=context,
-        #     feedback=feedback,
-        # )
-
-        # not_intersects_water_body = not_intersects_water_body['OUTPUT']
-
-        # flagText = 'Massa d’água com fluxo porém sem drenagem interna.'
-        # flagLambda = lambda x: self.flagFeature(
-        #     x.geometry(),
-        #     flagText=flagText,
-        #     sink=self.polygonFlagSink
-        # )
-        # list(map(flagLambda, not_intersects_water_body.getFeatures()))
 
 
         
