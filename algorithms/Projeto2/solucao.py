@@ -311,18 +311,25 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         ###############################################
         # Filtrando as camadas de drenagem que podem estar com fluxo errado.
         # Lista de expressões do filtro
+        # definindo o campo com aspas duplas
+        definir_id = '"id"'
         
         # Criar uma lista de expressões de filtro com base nos IDs do dicionário
         expressoes = []
         for ponto, ids in dict_teste.items():
             ids_formatados = [f"'{id}'" for id in ids]
-            expressao = f"'id' IN ({','.join(ids_formatados)})"
+            expressao = f"{definir_id} IN ({','.join(ids_formatados)})"
             expressoes.append(expressao)
         expressao_final = ' OR '.join(expressoes)
         print(expressao_final)
         expressao = QgsExpression(expressao_final)
 
-        # Após definida a expressão, extrairei um novo layer de drenagens
+        # # Adicionar as drenagens filtradas por essa expressão no projeto:
+        # drenagens_filtradas = drenagens.clone()
+        # drenagens_filtradas.setSubsetString(expressao_final)
+        # QgsProject.instance().addMapLayer(drenagens_filtradas)
+
+        # Após definida a expressão, extrairei um novo layer de drenagens utilizando ela como filtro na drainagesLyr
         drenagens_incorretas = processing.run("native:extractbyexpression", {
             'INPUT': drainagesLyr,
             'EXPRESSION': expressao.expression(),
