@@ -163,17 +163,6 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
                                 output_sink.addFeature(corr_feat)
                                 #remove_feat = QgsFeature(sinkFields)
                                 #remove_feat.QgsGeometryCollection.removeGeometry(QgsGeometry.fromPointXY(QgsPointXY(x0,y0)))
-            '''
-            for linha in rodovias.getFeatures():
-                geometriaLinha = linha.geometry()
-                
-                distance = geometriaPonto.distance(geometriaLinha)
-                feedback.pushInfo("Ok:" + str(distance))
-                if distance < distancia:
-                    x0 = QgsPointXY(ponto['x'])
-                    y0 = QgsPointXY(ponto['y'])
-                    feedback.pushInfo("x:" + str(x0)+", y:" + str(y0))
-                    #pto_prox = closestPoint()'''
 
     def name(self):
         """
