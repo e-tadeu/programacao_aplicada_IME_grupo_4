@@ -40,16 +40,18 @@ from qgis.core import (QgsProcessing,
                        QgsFeatureSink,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterFeatureSink,
+                       QgsProcessingParameterFeatureSource,
+                       QgsProcessingParameterNumber,
                        QgsProcessingException,
                        QgsWkbTypes,
                        QgsExpressionContextUtils,
                        QgsPointXY,
+                       QgsPoint,
                        QgsSpatialIndex,
                        QgsFeatureSink,
                        QgsFields,
                        QgsField,
                        QgsFeature,
-                       QgsGeometry,
                        QgsExpression,
                        QgsVectorLayer,
                        QgsProcessingMultiStepFeedback,
@@ -58,7 +60,8 @@ from qgis.core import (QgsProcessing,
                        QgsFeature,
                        QgsField,
                        QgsGeometry,
-                       QgsPointXY)
+                       QgsGeometryUtils,
+                       QgsGeometryCollection)
 import processing
 
 
@@ -74,67 +77,47 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
     # calling from the QGIS console.
 
     # Camadas de input
-    INPUT = 'INPUT'
-   
+    EDIFICACOES = 'EDIFICACOES'
+    RODOVIAS = 'RODOVIAS'
+    DISTANCIA = 'DISTANCIA'
+
     # Camadas de output
-    OUTPUT = 'OUTPUT'
+    FLAGPOINT = 'FLAGPOINT'
 
     def initAlgorithm(self, config):
 
-        self.addParameter(QgsProcessingParameterFeatureSource('edificios',
-                self.tr('Insira a camada de pontos das edificações:'),
-                [QgsProcessing.TypeVectorPoint]
-            )
-        )
-
-        self.addParameter(QgsProcessingParameterFeatureSource('rodovias',
-                self.tr('Insira a camada de linhas de rodovias:'),
-                [QgsProcessing.TypeVectorLine]
-            )
-        )
-                
-        self.addParameter(QgsProcessingParameterNumber('distancia',
-                self.tr('Insira a distância de deslocamento necessária'),
-                defaultValue=30,
-                type=QgsProcessingParameterNumber.Double
-            )
-        )
-
+        self.addParameter(QgsProcessingParameterVectorLayer(self.EDIFICACOES, self.tr('Insira as edificações'), 
+                                                            types=[QgsProcessing.TypeVectorPoint], 
+                                                            defaultValue=None))
         
-        self.addParameter(QgsProcessingParameterFeatureSink(
-                'OUTPUT',
-                self.tr('Camada de edificações generalizadas')
-            )
-        )
+        self.addParameter(QgsProcessingParameterVectorLayer(self.RODOVIAS, self.tr('Insira as rodovias'), 
+                                                            types=[QgsProcessing.TypeVectorLine], 
+                                                            defaultValue=None))
+                
+        self.addParameter(QgsProcessingParameterNumber(self.DISTANCIA,
+                                                       self.tr('Insira a distância de deslocamento necessária'),
+                                                       defaultValue=30,
+                                                       type=QgsProcessingParameterNumber.Double))
+
+        self.addParameter(QgsProcessingParameterFeatureSink(self.FLAGPOINT, self.tr('Edificações generalizadas'), 
+                                                            type=QgsProcessing.TypeVectorPoint, 
+                                                            createByDefault=True, 
+                                                            supportsAppend=True, 
+                                                            defaultValue='TEMPORARY_OUTPUT'))
         
         
     def processAlgorithm(self, parameters, context, feedback):
         """
         Here is where the processing itself takes place.
         """
-        edificios = self.parameterAsVectorLayer(
-            parameters,
-            'edificios',
-            context
-        )
+        edificios = self.parameterAsVectorLayer(parameters,self.EDIFICACOES,context)
+        rodovias = self.parameterAsVectorLayer(parameters,self.RODOVIAS,context)
+        distancia = self.parameterAsDouble(parameters,self.DISTANCIA,context)
 
-        rodovias = self.parameterAsVectorLayer(
-            parameters,
-            'rodovias',
-            context
-        )
-
-        distancia = self.parameterAsDouble(
-            parameters,
-            'distancia',
-            context
-        )
-
-        
         sinkFields = edificios.fields()
         (output_sink, output_dest_id) = self.parameterAsSink(
                                             parameters,
-                                            'OUTPUT',
+                                            'FLAGPOINT',
                                             context,
                                             sinkFields,
                                             1,
@@ -144,6 +127,13 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
         '''for feat in ed.getFeatures():
             output_sink.addFeature(feat)'''
         
+        #        (self.pointFlagSink, self.point_flag_id) = self.prepareAndReturnFlagSink(
+        #    parameters,
+        #    drenagens,
+        #    QgsWkbTypes.Point,
+        #    context,
+        #    self.FLAGPOINT
+        #)
         for ponto in edificios.getFeatures():
             geometriaPonto = ponto.geometry()
             for partes in geometriaPonto.parts():
@@ -155,44 +145,35 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
                     for linha in rodovias.getFeatures():
                         geometriaLinha = linha.geometry()
                         for l in geometriaLinha.parts():
-                            #feedback.pushInfo(str(l))
                             pontoaux = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
                             geomaux = QgsPoint(xn,yn)
-                            distancia = pontoaux.distance(geometriaLinha)
-                            if distancia < DIST:
+                            distance = pontoaux.distance(geometriaLinha)
+                            if distance < distancia:
                                 pto_prox = QgsGeometryUtils.closestPoint(l,geomaux)
                                 x_p = pto_prox.x()
                                 y_p = pto_prox.y()
                                 m = ((xn - x_p)**2 + (yn - y_p)**2)**0.5
-                                xn = x_p + (DIST/m)*(xn - x_p)
-                                yn = y_p + (DIST/m)*(yn - y_p)
+                                xn = x_p + (distancia/m)*(xn - x_p)
+                                yn = y_p + (distancia/m)*(yn - y_p)
                                 
-                                '''novo_pto = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
+                                novo_pto = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
                                 corr_feat = QgsFeature(sinkFields)
                                 feedback.pushInfo(str(novo_pto))
-                                #feedback.pushInfo("y:"+str(y0))
                                 corr_feat.setGeometry(novo_pto)
-                                #corr_feat.setAttribute('Corrigido','Ponto corrigido')
                                 output_sink.addFeature(corr_feat)
-                                remove_feat = QgsFeature(sinkFields)
-                                remove_feat.QgsGeometryCollection.removeGeometry(QgsGeometry.fromPointXY(QgsPointXY(x0,y0)))'''
-                    novo_pto = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
-                    corr_feat = QgsFeature(sinkFields)
-                    feedback.pushInfo(str(novo_pto))
-                    corr_feat.setGeometry(novo_pto)
-                    output_sink.addFeature(corr_feat)   
+                                #remove_feat = QgsFeature(sinkFields)
+                                #remove_feat.QgsGeometryCollection.removeGeometry(QgsGeometry.fromPointXY(QgsPointXY(x0,y0)))
             '''
             for linha in rodovias.getFeatures():
                 geometriaLinha = linha.geometry()
                 
                 distance = geometriaPonto.distance(geometriaLinha)
-                #feedback.pushInfo("Ok:" + str(distance))
+                feedback.pushInfo("Ok:" + str(distance))
                 if distance < distancia:
                     x0 = QgsPointXY(ponto['x'])
                     y0 = QgsPointXY(ponto['y'])
                     feedback.pushInfo("x:" + str(x0)+", y:" + str(y0))
-                    #pto_prox = closestPoint()
-            ''' 
+                    #pto_prox = closestPoint()'''
 
     def name(self):
         """
@@ -269,4 +250,4 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return Projeto2Solucao()
+        return Projeto3Solucao()

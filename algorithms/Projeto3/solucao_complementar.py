@@ -44,7 +44,7 @@ from qgis.core import (QgsProcessing,
 import processing
 
 
-class Projeto4SolucaoComplementar(QgsProcessingAlgorithm):
+class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
     """
     Este algoritmo realiza a generalização de edifícios próximos às rodovias.
 
@@ -211,7 +211,7 @@ class Projeto4SolucaoComplementar(QgsProcessingAlgorithm):
         lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        return 'Solução Complementar do Projeto 2'
+        return 'Solução Complementar do Projeto 3'
 
     def displayName(self):
         """
@@ -235,7 +235,7 @@ class Projeto4SolucaoComplementar(QgsProcessingAlgorithm):
         contain lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        return 'Projeto 2'
+        return 'Projeto 3'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
