@@ -32,6 +32,7 @@ __copyright__ = '(C) 2023 by Grupo 4'
 
 __revision__ = '$Format:%H$'
 
+import os
 from code import interact
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.Qt import QVariant, QCoreApplication
@@ -82,7 +83,7 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
     DISTANCIA = 'DISTANCIA'
 
     # Camadas de output
-    FLAGPOINT = 'FLAGPOINT'
+    OUTPUT = 'OUTPUT'
 
     def initAlgorithm(self, config):
 
@@ -95,11 +96,11 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
                                                             defaultValue=None))
                 
         self.addParameter(QgsProcessingParameterNumber(self.DISTANCIA,
-                                                       self.tr('Insira a distância de deslocamento necessária'),
-                                                       defaultValue=30,
+                                                       self.tr('Insira a distância máxima de deslocamento'),
+                                                       defaultValue=60,
                                                        type=QgsProcessingParameterNumber.Double))
 
-        self.addParameter(QgsProcessingParameterFeatureSink(self.FLAGPOINT, self.tr('Edificações generalizadas'), 
+        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Edificações generalizadas'), 
                                                             type=QgsProcessing.TypeVectorPoint, 
                                                             createByDefault=True, 
                                                             supportsAppend=True, 
@@ -115,54 +116,106 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
         distancia = self.parameterAsDouble(parameters,self.DISTANCIA,context)
 
         sinkFields = edificios.fields()
-        (output_sink, output_dest_id) = self.parameterAsSink(
-                                            parameters,
-                                            'FLAGPOINT',
-                                            context,
-                                            sinkFields,
-                                            1,
-                                            edificios.sourceCrs()
-                                        )
+        (output_sink, output_dest_id) = self.parameterAsSink(parameters,self.OUTPUT,context,
+                                                             sinkFields,1,edificios.sourceCrs())
         
-        '''for feat in ed.getFeatures():
-            output_sink.addFeature(feat)'''
-        
-        #        (self.pointFlagSink, self.point_flag_id) = self.prepareAndReturnFlagSink(
-        #    parameters,
-        #    drenagens,
-        #    QgsWkbTypes.Point,
-        #    context,
-        #    self.FLAGPOINT
-        #)
-        for ponto in edificios.getFeatures():
+        total = 100.0 / edificios.featureCount() if edificios.featureCount() else 0
+
+        cont = 0
+        cont_2 = 0
+        pontos = edificios.getFeatures()
+        dist_min = 30.5 #Soma da metade da via (25/2) + a metade da diagonal de um quadrado de lado 25
+        for current, ponto in enumerate(pontos):
             geometriaPonto = ponto.geometry()
             for partes in geometriaPonto.parts():
                 for p in partes.vertices():
-                    x0 = p.x()
-                    y0 = p.y()
-                    xn = x0
-                    yn = y0
+                    xi = p.x()
+                    yi = p.y()
+                    xn = xi
+                    yn = yi
+
                     for linha in rodovias.getFeatures():
                         geometriaLinha = linha.geometry()
                         for l in geometriaLinha.parts():
                             pontoaux = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
-                            geomaux = QgsPoint(xn,yn)
+                            geoaux = QgsPoint(xn,yn)
+                            distance = pontoaux.distance(geometriaLinha)
+                            if distance < dist_min:
+                                p_prox = QgsGeometryUtils.closestPoint(l,geoaux)
+                                xp = p_prox.x()
+                                yp = p_prox.y()
+                                m = ((xn-xp)**2 + (yn-yp)**2)**0.5
+                                xn = xp + (distancia/m)*(xn-xp)
+                                yn = yp + (distancia/m)*(yn-yp)
+                            
+                            pontoaux_n = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
+                            pontoaux_i = QgsGeometry.fromPointXY(QgsPointXY(xi,yi))
+                            deslocamento = pontoaux_n.distance(pontoaux_i)
+                            if deslocamento > distancia:
+                                xn = xi
+                                yn = yi
+                            
+                            if feedback.isCanceled():
+                                break
+                    
+                    """
+                    for linha in rodovias.getFeatures():
+                        geometriaLinha = linha.geometry()
+                        for l in geometriaLinha.parts():
+                            pontoaux = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
+                            geoaux = QgsPoint(xn,yn)
                             distance = pontoaux.distance(geometriaLinha)
                             if distance < distancia:
-                                pto_prox = QgsGeometryUtils.closestPoint(l,geomaux)
-                                x_p = pto_prox.x()
-                                y_p = pto_prox.y()
-                                m = ((xn - x_p)**2 + (yn - y_p)**2)**0.5
-                                xn = x_p + (distancia/m)*(xn - x_p)
-                                yn = y_p + (distancia/m)*(yn - y_p)
-                                
-                                novo_pto = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
-                                corr_feat = QgsFeature(sinkFields)
-                                feedback.pushInfo(str(novo_pto))
-                                corr_feat.setGeometry(novo_pto)
-                                output_sink.addFeature(corr_feat)
-                                #remove_feat = QgsFeature(sinkFields)
-                                #remove_feat.QgsGeometryCollection.removeGeometry(QgsGeometry.fromPointXY(QgsPointXY(x0,y0)))
+                                p_prox = QgsGeometryUtils.closestPoint(l,geoaux)
+                                xp = p_prox.x()
+                                yp = p_prox.y()
+                                m = ((xn-xp)**2 + (yn-yp)**2)**0.5
+                                xn = xp + (distancia/m)*(xn-xp)
+                                yn = yp + (distancia/m)*(yn-yp)
+                            
+                            if feedback.isCanceled():
+                                break"""
+                      
+                    novo_ponto = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
+                    novo_feat = QgsFeature(sinkFields)
+                    #feedback.pushInfo(f'O ponto de coordenadas {str(p)} agora possui coordenadas {str(novo_ponto)}')
+                    novo_feat.setGeometry(novo_ponto)
+                    output_sink.addFeature(novo_feat)
+
+            current += 1
+            feedback.setProgress(int(current * total))
+
+        for linha in rodovias.getFeatures():
+            geometriaLinha = linha.geometry()
+            for ponto in edificios.getFeatures():
+                geometriaPoint = ponto.geometry()
+                distance = geometriaPonto.distance(geometriaLinha)
+            #feedback.pushInfo("Ok:" + str(distance))
+            if distance < distancia:
+                cont += 1
+                #feedback.pushInfo(f"O ponto {str(novo_ponto)} está próximo da via.")
+                #pto_prox = closestPoint()
+        for ponto in edificios.getFeatures():
+            geometriaPonto = ponto.geometry()
+            for point in edificios.getFeatures():
+                    geometriaPoint = point.geometry()
+                    if not geometriaPonto.equals(geometriaPoint):
+                        distance = geometriaPonto.distance(geometriaPoint)
+                        #feedback.pushInfo("Ok:" + str(distance))
+                        if distance < distancia:
+                            cont_2 += 1
+                        #feedback.pushInfo(f"O ponto {str(novo_ponto)} está próximo da via.")
+                    #pto_prox = closestPoint()
+    
+        feedback.pushInfo(f'Há {cont} pontos próximos à via. E {cont_2} edifícios próximos um do outro.')
+        # Configurando o estilo da camada
+
+        # Get the path to the plugin directory
+        #plugin_dir = os.path.dirname(__file__)
+
+        # Construct the path to the layer style file
+        #style_file = os.path.join(plugin_dir, 'edificacoes.qml')
+        return {self.OUTPUT: output_dest_id}
 
     def name(self):
         """
@@ -197,43 +250,6 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
         formatting characters.
         """
         return 'Projeto 3'
-
-    # Definição da função auxiliar para definir as camadas de saída
-
-    def prepareAndReturnFlagSink(self, parameters, source, wkbType, context, UI_FIELD):
-        flagFields = self.getFlagFields()
-        (flagSink, flag_id) = self.parameterAsSink(
-            parameters,
-            UI_FIELD,
-            context,
-            flagFields,
-            wkbType,
-            source.sourceCrs() if source is not None else QgsProject.instance().crs()
-        )
-        if flagSink is None:
-            raise QgsProcessingException(self.invalidSinkError(parameters, UI_FIELD))
-        return (flagSink, flag_id)
-    
-    #Função para auxiliar na não recorrência de código
-
-    def getFlagFields(self):
-        fields = QgsFields()
-        fields.append(QgsField('Motivo',QVariant.String))
-        return fields
-    
-    #Função para adicionar as Flags nos outputs.
-    
-    def flagFeature(self, flagGeom, flagText, sink=None):
-        """
-        Creates and adds to flagSink a new flag with the reason.
-        :param flagGeom: (QgsGeometry) geometry of the flag;
-        :param flagText: (string) Text of the flag
-        """
-        flagSink = self.flagSink if sink is None else sink
-        newFeat = QgsFeature(self.getFlagFields())
-        newFeat['Motivo'] = flagText
-        newFeat.setGeometry(flagGeom)
-        flagSink.addFeature(newFeat, QgsFeatureSink.FastInsert)
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
