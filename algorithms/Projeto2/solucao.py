@@ -311,18 +311,25 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         ###############################################
         # Filtrando as camadas de drenagem que podem estar com fluxo errado.
         # Lista de expressões do filtro
+        # definindo o campo com aspas duplas
+        definir_id = '"id"'
         
         # Criar uma lista de expressões de filtro com base nos IDs do dicionário
         expressoes = []
         for ponto, ids in dict_teste.items():
             ids_formatados = [f"'{id}'" for id in ids]
-            expressao = f"'id' IN ({','.join(ids_formatados)})"
+            expressao = f"{definir_id} IN ({','.join(ids_formatados)})"
             expressoes.append(expressao)
         expressao_final = ' OR '.join(expressoes)
         print(expressao_final)
         expressao = QgsExpression(expressao_final)
 
-        # Após definida a expressão, extrairei um novo layer de drenagens
+        # # Adicionar as drenagens filtradas por essa expressão no projeto:
+        # drenagens_filtradas = drenagens.clone()
+        # drenagens_filtradas.setSubsetString(expressao_final)
+        # QgsProject.instance().addMapLayer(drenagens_filtradas)
+
+        # Após definida a expressão, extrairei um novo layer de drenagens utilizando ela como filtro na drainagesLyr
         drenagens_incorretas = processing.run("native:extractbyexpression", {
             'INPUT': drainagesLyr,
             'EXPRESSION': expressao.expression(),
@@ -353,42 +360,27 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
 
         flagText = 'Drenagens que iniciam em sumidouro'
 
-        #attributesError = 0
-        for line in drenagens.getFeatures():
-            lineGeometry = line.geometry()
-            # Obtemos o último vértice
-            vertices = lineGeometry.vertices()
-            for vertice in vertices:
-                ultimo_vertice = vertice
-                break
-            for ponto in pontos.getFeatures():
-                if ponto.attributes()[4] == 1: # Ponto é sumidouro
-                    pontoGeometry = ponto.geometry()
-                    if pontoGeometry.equals(QgsGeometry.fromPointXY(QgsPointXY(ultimo_vertice.x(), ultimo_vertice.y()))):
-                        self.flagFeature(
-                            lineGeometry,
-                            flagText=flagText,
-                            sink=self.lineFlagSink
+        attributesError = 0
+        for ponto in pontos.getFeatures():
+            tipo = ponto.attributes()[4]
+            if tipo == 1:
+                pontoGeometry = ponto.geometry()
+                for line in drenagens.getFeatures():
+                    lineGeometry = line.geometry()
+                    nome = line.attributes()[1]
+                    for part in lineGeometry.parts():
+                        vertices = list(part)
+                        initialPoint = QgsGeometry.fromPointXY(QgsPointXY(vertices[0].x(), vertices[0].y()))
+                        if initialPoint.equals(pontoGeometry):
+                            self.flagFeature(
+                                lineGeometry,
+                                flagText=flagText,
+                                sink=self.lineFlagSink
                             )
-        #                 #attributesError += 1
-        # for ponto in pontos.getFeatures():
-        #     tipo = ponto.attributes()[4]
-        #     if tipo == 1:
-        #         pontoGeometry = ponto.geometry()
-        #         for line in drenagens.getFeatures():
-        #             lineGeometry = line.geometry()
-        #             nome = line.attributes()[1]
-        #             for part in lineGeometry.vertices():
-        #                 vertices = list(part)
-        #                 initialPoint = QgsGeometry.fromPointXY(QgsPointXY(vertices[0].x(), vertices[0].y()))
-        #                 if initialPoint.equals(pontoGeometry):
-        #                     self.flagFeature(
-        #                         line.geometry(),
-        #                         flagText=flagText,
-        #                         sink=self.lineFlagSink
-        #                         )
-                            #attributesError += 1
-        #feedback.pushInfo(f"2. Há {attributesError} drenagens que iniciam num sumidouro!")
+                            feedback.pushInfo(f"A drenagem {nome} inicia num sumidouro!")
+                            attributesError += 1
+        feedback.pushInfo(f"2. Há {attributesError} drenagens que iniciam num sumidouro!")
+            
         feedback.setCurrentStep(3)
         if feedback.isCanceled():
             return {}
@@ -416,9 +408,11 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
                                 lineGeometry,
                                 flagText=flagText,
                                 sink=self.lineFlagSink
-                                )
+                            )
+                            feedback.pushInfo(f"A drenagem {nome} finaliza em um vertedouro!")
                             attributesError += 1
         feedback.pushInfo(f"3. Há {attributesError} drenagens finalizam em vertedouros!")
+
         
         feedback.setCurrentStep(4)
         if feedback.isCanceled():
@@ -501,30 +495,6 @@ class Projeto2Solucao(QgsProcessingAlgorithm):
         feedback.setCurrentStep(6)
         if feedback.isCanceled():
             return {}
-        
-        # Iremos validar a intersecção das drenagens com as massa d'água que estão indicadas como sem drenagem.
-        
-        # not_intersects_water_body = processing.run(
-        #     "native:extractbylocation",
-        #     {
-        #         'INPUT': waterBodyWithFlow,
-        #         'INTERSECT': drainagesLyr,
-        #         'PREDICATE': [2],
-        #         'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        #     },
-        #     context=context,
-        #     feedback=feedback,
-        # )
-
-        # not_intersects_water_body = not_intersects_water_body['OUTPUT']
-
-        # flagText = 'Massa d’água com fluxo porém sem drenagem interna.'
-        # flagLambda = lambda x: self.flagFeature(
-        #     x.geometry(),
-        #     flagText=flagText,
-        #     sink=self.polygonFlagSink
-        # )
-        # list(map(flagLambda, not_intersects_water_body.getFeatures()))
 
 
         
