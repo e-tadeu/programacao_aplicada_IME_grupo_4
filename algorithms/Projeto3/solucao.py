@@ -121,10 +121,9 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
         
         total = 100.0 / edificios.featureCount() if edificios.featureCount() else 0
 
-        cont = 0
-        cont_2 = 0
         pontos = edificios.getFeatures()
-        dist_min = 30.5 #Soma da metade da via (25/2) + a metade da diagonal de um quadrado de lado 25
+        dist_min = 30.5 #Pouco maior que a soma da metade da via (25/2) + a metade da diagonal de um quadrado de lado 25
+        dist_min_ed = 35.5 #Pouco maior que a soma das metade das diagonais de um quadrado de lado 25
         for current, ponto in enumerate(pontos):
             geometriaPonto = ponto.geometry()
             for partes in geometriaPonto.parts():
@@ -145,8 +144,8 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
                                 xp = p_prox.x()
                                 yp = p_prox.y()
                                 m = ((xn-xp)**2 + (yn-yp)**2)**0.5
-                                xn = xp + (distancia/m)*(xn-xp)
-                                yn = yp + (distancia/m)*(yn-yp)
+                                xn = xp + (dist_min/m)*(xn-xp)
+                                yn = yp + (dist_min/m)*(yn-yp)
                             
                             pontoaux_n = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
                             pontoaux_i = QgsGeometry.fromPointXY(QgsPointXY(xi,yi))
@@ -157,64 +156,41 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
                             
                             if feedback.isCanceled():
                                 break
-                    
                     """
-                    for linha in rodovias.getFeatures():
-                        geometriaLinha = linha.geometry()
-                        for l in geometriaLinha.parts():
-                            pontoaux = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
-                            geoaux = QgsPoint(xn,yn)
-                            distance = pontoaux.distance(geometriaLinha)
-                            if distance < distancia:
-                                p_prox = QgsGeometryUtils.closestPoint(l,geoaux)
-                                xp = p_prox.x()
-                                yp = p_prox.y()
-                                m = ((xn-xp)**2 + (yn-yp)**2)**0.5
-                                xn = xp + (distancia/m)*(xn-xp)
-                                yn = yp + (distancia/m)*(yn-yp)
+                    for point in edificios.getFeatures():
+                        geometriaPoint = point.geometry()
+                        if not geometriaPonto.equals(geometriaPoint):
+                            distance = geometriaPonto.distance(geometriaPoint)
+                            if distance < dist_min_ed:
+                                for partes in geometriaPoint.parts():
+                                    for pp in partes.vertices():
+                                        xp = pp.x()
+                                        yp = pp.y()
+                                        m = ((xn-xp)**2 + (yn-yp)**2)**0.5
+                                        xn = xp + (dist_min_ed/m)*(xn-xp)
+                                        yn = yp + (dist_min_ed/m)*(yn-yp)
                             
                             if feedback.isCanceled():
                                 break"""
-                      
+
                     novo_ponto = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
                     novo_feat = QgsFeature(sinkFields)
-                    #feedback.pushInfo(f'O ponto de coordenadas {str(p)} agora possui coordenadas {str(novo_ponto)}')
                     novo_feat.setGeometry(novo_ponto)
                     output_sink.addFeature(novo_feat)
 
             current += 1
             feedback.setProgress(int(current * total))
 
-        for linha in rodovias.getFeatures():
-            geometriaLinha = linha.geometry()
-            for ponto in edificios.getFeatures():
-                geometriaPoint = ponto.geometry()
-                distance = geometriaPonto.distance(geometriaLinha)
-            #feedback.pushInfo("Ok:" + str(distance))
-            if distance < distancia:
-                cont += 1
-                #feedback.pushInfo(f"O ponto {str(novo_ponto)} está próximo da via.")
-                #pto_prox = closestPoint()
-        for ponto in edificios.getFeatures():
-            geometriaPonto = ponto.geometry()
-            for point in edificios.getFeatures():
-                    geometriaPoint = point.geometry()
-                    if not geometriaPonto.equals(geometriaPoint):
-                        distance = geometriaPonto.distance(geometriaPoint)
-                        #feedback.pushInfo("Ok:" + str(distance))
-                        if distance < distancia:
-                            cont_2 += 1
-                        #feedback.pushInfo(f"O ponto {str(novo_ponto)} está próximo da via.")
-                    #pto_prox = closestPoint()
-    
-        feedback.pushInfo(f'Há {cont} pontos próximos à via. E {cont_2} edifícios próximos um do outro.')
         # Configurando o estilo da camada
 
         # Get the path to the plugin directory
-        #plugin_dir = os.path.dirname(__file__)
+        plugin_dir = os.path.dirname(__file__)
 
         # Construct the path to the layer style file
-        #style_file = os.path.join(plugin_dir, 'edificacoes.qml')
+        style_file = os.path.join(plugin_dir, 'edificacoes.qml')
+
+        alg_params = {'STYLE': style_file}
+        #output_sink['ConfigurandoOEstiloDaCamada'] = processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
         return {self.OUTPUT: output_dest_id}
 
     def name(self):
