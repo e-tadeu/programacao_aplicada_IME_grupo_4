@@ -25,22 +25,19 @@
 """
 
 __author__ = 'Grupo 4'
-__date__ = '2023-05-04'
+__date__ = '2023-20-05'
 __copyright__ = '(C) 2023 by Grupo 4'
 
 # This will get replaced with a git SHA1 when you do a git archive
 
 __revision__ = '$Format:%H$'
 
-
-from qgis.PyQt.QtCore import QCoreApplication
-from qgis.core import (QgsProcessing,
-                       QgsProcessingAlgorithm,
-                       QgsProcessingParameterFeatureSink,
-                       QgsProcessingMultiStepFeedback,
-                       QgsProcessingParameterVectorLayer,
-                       QgsProcessingParameterRasterLayer,
-                       QgsExpression)
+from qgis.PyQt.Qt import QVariant, QCoreApplication
+from qgis.core import QgsProcessing
+from qgis.core import QgsProcessingAlgorithm
+from qgis.core import QgsProcessingMultiStepFeedback
+from qgis.core import QgsProcessingParameterVectorLayer
+from qgis.core import QgsProcessingParameterFeatureSink
 import processing
 
 
@@ -55,15 +52,13 @@ class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
     # calling from the QGIS console.
 
     def initAlgorithm(self, config=None):
-        #Entradas
-        self.addParameter(QgsProcessingParameterVectorLayer('drenagem', 'Drenagem', 
-                                                            types=[QgsProcessing.TypeVectorLine], 
+        self.addParameter(QgsProcessingParameterVectorLayer('edificacoes', 'Edificacoes',
+                                                            types=[QgsProcessing.TypeVectorPoint],
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('massas_de_agua', 'Massas de Agua',
-                                                            types=[QgsProcessing.TypeVectorPolygon],
+        self.addParameter(QgsProcessingParameterVectorLayer('vias', 'Vias',
+                                                            types=[QgsProcessing.TypeVectorLine],
                                                             defaultValue=None))
-        #Saida
-        self.addParameter(QgsProcessingParameterFeatureSink('Trecho_drenagens_ajust', 'Trecho_Drenagens_Ajust',
+        self.addParameter(QgsProcessingParameterFeatureSink('EdificacoesRotacionadas', 'Edificacoes Rotacionadas',
                                                             type=QgsProcessing.TypeVectorAnyGeometry,
                                                             createByDefault=True,
                                                             supportsAppend=True,
@@ -76,131 +71,118 @@ class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
         results = {}
         outputs = {}
 
-        # Indices Espaciais Massas de Agua
+        # Indices Espaciais Vias
         alg_params = {
-            'INPUT': parameters['massas_de_agua']
+            'INPUT': parameters['vias']
         }
-        outputs['IndicesEspaciaisMassasDeAgua'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['IndicesEspaciaisVias'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(1)
         if feedback.isCanceled():
             return {}
 
-        # Indices Espaciais Drenagens
+        # Explodir linhas
         alg_params = {
-            'INPUT': parameters['drenagem']
+            'INPUT': outputs['IndicesEspaciaisVias']['OUTPUT'],
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
         }
-        outputs['IndicesEspaciaisDrenagens'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['ExplodirLinhas'] = processing.run('native:explodelines', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(2)
         if feedback.isCanceled():
             return {}
 
-        # Intersecao 
+        # Descartar campos nao usados
         alg_params = {
-            'GRID_SIZE': None,
-            'INPUT': outputs['IndicesEspaciaisDrenagens']['OUTPUT'],
-            'INPUT_FIELDS': [''],
-            'OUTPUT': 'TEMPORARY_OUTPUT',
-            'OVERLAY': outputs['IndicesEspaciaisMassasDeAgua']['OUTPUT'],
-            'OVERLAY_FIELDS': ['null'],
-            'OVERLAY_FIELDS_PREFIX': '',
+            'COLUMN': ["'",'id','nome','geometriaa','jurisdicao','administra','concession','revestimen','operaciona','situacaofi','canteirodi','nrpistas','nrfaixas','trafego','tipopavime','tipovia','sigla','codtrechor','limitevelo','trechoempe','acostament','length_otf',"'"],
+            'INPUT': outputs['ExplodirLinhas']['OUTPUT'],
             'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
         }
-        outputs['Intersec'] = processing.run('native:intersection', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['DescartarCamposNaoUsados'] = processing.run('native:deletecolumn', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(3)
         if feedback.isCanceled():
             return {}
 
-        # Diferenca simetrica
+        # Indices Espaciais Edificacoes
         alg_params = {
-            'GRID_SIZE': None,
-            'INPUT': outputs['IndicesEspaciaisDrenagens']['OUTPUT'],
-            'OUTPUT': 'TEMPORARY_OUTPUT',
-            'OVERLAY': outputs['Intersec']['OUTPUT'],
-            'OVERLAY_FIELDS_PREFIX': '',
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+            'INPUT': parameters['edificacoes']
         }
-        outputs['DiferencaSimetrica'] = processing.run('native:symmetricaldifference', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['IndicesEspaciaisEdificacoes'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(4)
         if feedback.isCanceled():
             return {}
 
-        # Coluna Temporaria Verdadeira
+        # Calculando os azimutes
         alg_params = {
-            'FIELD_LENGTH': 0,
-            'FIELD_NAME': 'Col_Temp_True',
-            'FIELD_PRECISION': 0,
-            'FIELD_TYPE': 6,  # Booleano
-            'FORMULA': 'true',
-            'INPUT': outputs['Intersec']['OUTPUT'],
+            'FIELD_LENGTH': 10,
+            'FIELD_NAME': 'Azimute',
+            'FIELD_PRECISION': 5,
+            'FIELD_TYPE': 0,  # Decimal (double)
+            'FORMULA': 'degrees(azimuth(start_point($geometry),end_point($geometry)))',
+            'INPUT': outputs['DescartarCamposNaoUsados']['OUTPUT'],
             'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
         }
-        outputs['ColunaTemporriaVerdadeira'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['CalculandoOsAzimutes'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(5)
         if feedback.isCanceled():
             return {}
 
-        # Uniao
+        # Unir atributos pelo mais proximo
         alg_params = {
-            'GRID_SIZE': None,
-            'INPUT': outputs['DiferencaSimetrica']['OUTPUT'],
-            'OUTPUT': 'TEMPORARY_OUTPUT',
-            'OVERLAY': outputs['Intersec']['OUTPUT'],
-            'OVERLAY_FIELDS_PREFIX': '',
+            'DISCARD_NONMATCHING': False,
+            'FIELDS_TO_COPY': [''],
+            'INPUT': outputs['IndicesEspaciaisEdificacoes']['OUTPUT'],
+            'INPUT_2': outputs['CalculandoOsAzimutes']['OUTPUT'],
+            'MAX_DISTANCE': None,
+            'NEIGHBORS': 1,
+            'NON_MATCHING': None,
+            'PREFIX': '',
             'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
         }
-        outputs['Uniao'] = processing.run('native:union', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['UnirAtributosPeloMaisProximo'] = processing.run('native:joinbynearest', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(6)
         if feedback.isCanceled():
             return {}
 
-        # Associar atributos por localizacao
+        # Alimentando a coluna rotacao
         alg_params = {
-            'DISCARD_NONMATCHING': False,
-            'INPUT': outputs['Uniao']['OUTPUT'],
-            'JOIN': outputs['ColunaTemporriaVerdadeira']['OUTPUT'],
-            'JOIN_FIELDS': [''],
-            'METHOD': 1,  # Tomar atributos apenas da primeira feicao coincidente (uma-por-uma)
-            'NON_MATCHING': None,
-            'PREDICATE': [2],  # igual
-            'PREFIX': '',
+            'FIELD_LENGTH': 0,
+            'FIELD_NAME': 'rotacao',
+            'FIELD_PRECISION': 0,
+            'FIELD_TYPE': 0,  # Decimal (double)
+            'FORMULA': '"Azimute"',
+            'INPUT': outputs['UnirAtributosPeloMaisProximo']['OUTPUT'],
             'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
         }
-        outputs['AssociarAtributosPorLocalizao'] = processing.run('native:joinattributesbylocation', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['AlimentandoAColunaRotacao'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(7)
         if feedback.isCanceled():
             return {}
 
-        # Criacao da Coluna Final
+        # Descartar campos excedentes
         alg_params = {
-            'FIELD_LENGTH': 0,
-            'FIELD_NAME': 'dentro_de_poligono',
-            'FIELD_PRECISION': 0,
-            'FIELD_TYPE': 6,  # Booleano
-            'FORMULA': 'if("Col_Temp_True" = true,true,false)',
-            'INPUT': outputs['AssociarAtributosPorLocalizao']['OUTPUT'],
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+            'COLUMN': ["'",'Azimute','n','distance','feature_x','feature_y','nearest_x','nearest_y',"'"],
+            'INPUT': outputs['AlimentandoAColunaRotacao']['OUTPUT'],
+            'OUTPUT': parameters['EdificacoesRotacionadas']
         }
-        outputs['CriacaoDaColunaFinal'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['DescartarCamposExcedentes'] = processing.run('native:deletecolumn', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        results['EdificacoesRotacionadas'] = outputs['DescartarCamposExcedentes']['OUTPUT']
 
         feedback.setCurrentStep(8)
         if feedback.isCanceled():
             return {}
 
-        # Descartar coluna temporaria
+        # Configurando o estilo de camada de saida
         alg_params = {
-            'COLUMN': ['Col_Temp_True'],
-            'INPUT': outputs['CriacaoDaColunaFinal']['OUTPUT'],
-            'OUTPUT': parameters['Trecho_drenagens_ajust']
+            'INPUT': outputs['DescartarCamposExcedentes']['OUTPUT'],
+            'STYLE': 'D:\\IME\\SE-6\\2023.1\\02 - Programação Aplicada\\Projeto 03\\Complementar\\edificacoes.qml'
         }
-        outputs['DelColTemp'] = processing.run('native:deletecolumn', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
-        results['Trecho_drenagens_ajust'] = outputs['DelColTemp']['OUTPUT']
+        outputs['ConfigurandoOEstiloDeCamadaDeSaida'] = processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
         return results
 
     def name(self):
@@ -241,6 +223,6 @@ class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return Projeto2SolucaoComplementar()
+        return Projeto3SolucaoComplementar()
     
   
