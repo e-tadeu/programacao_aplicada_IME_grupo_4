@@ -39,7 +39,7 @@ from qgis.core import QgsProcessingMultiStepFeedback
 from qgis.core import QgsProcessingParameterVectorLayer
 from qgis.core import QgsProcessingParameterFeatureSink
 import processing
-
+import os
 
 class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
     """
@@ -58,7 +58,7 @@ class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterVectorLayer('vias', 'Vias',
                                                             types=[QgsProcessing.TypeVectorLine],
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterFeatureSink('EdificacoesRotacionadas', 'Edificacoes Rotacionadas',
+        self.addParameter(QgsProcessingParameterFeatureSink('EdificacoesRotacionadas', self.tr('Edificacoes Rotacionadas'),
                                                             type=QgsProcessing.TypeVectorAnyGeometry,
                                                             createByDefault=True,
                                                             supportsAppend=True,
@@ -178,9 +178,14 @@ class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
             return {}
 
         # Configurando o estilo de camada de saida
+
+           # Get the path to the plugin directory
+        plugin_dir = os.path.dirname(__file__)
+        style_file = os.path.join(plugin_dir, 'edificacoes.qml')
+
         alg_params = {
             'INPUT': outputs['DescartarCamposExcedentes']['OUTPUT'],
-            'STYLE': 'D:\\IME\\SE-6\\2023.1\\02 - Programação Aplicada\\Projeto 03\\Complementar\\edificacoes.qml'
+            'STYLE': style_file
         }
         outputs['ConfigurandoOEstiloDeCamadaDeSaida'] = processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
         return results

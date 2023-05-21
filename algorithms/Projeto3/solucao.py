@@ -189,8 +189,11 @@ class Projeto3Solucao(QgsProcessingAlgorithm):
         # Construct the path to the layer style file
         style_file = os.path.join(plugin_dir, 'edificacoes.qml')
 
-        alg_params = {'STYLE': style_file}
-        #output_sink['ConfigurandoOEstiloDaCamada'] = processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        alg_params = {
+            'INPUT': output_dest_id,
+            'STYLE': style_file
+        }
+        processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
         return {self.OUTPUT: output_dest_id}
 
     def name(self):
