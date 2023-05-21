@@ -50,19 +50,20 @@ class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
     # Constants used to refer to parameters and outputs. They will be
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
+    OUTPUT = 'OUTPUT'
 
     def initAlgorithm(self, config=None):
-        self.addParameter(QgsProcessingParameterVectorLayer('edificacoes', 'Edificacoes',
+        self.addParameter(QgsProcessingParameterVectorLayer('edificacoes', self.tr('Insira as edificações'),
                                                             types=[QgsProcessing.TypeVectorPoint],
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('vias', 'Vias',
+        self.addParameter(QgsProcessingParameterVectorLayer('vias', self.tr('Insira as rodovias'),
                                                             types=[QgsProcessing.TypeVectorLine],
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterFeatureSink('EdificacoesRotacionadas', self.tr('Edificacoes Rotacionadas'),
+        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Edificacoes Rotacionadas'),
                                                             type=QgsProcessing.TypeVectorAnyGeometry,
                                                             createByDefault=True,
                                                             supportsAppend=True,
-                                                            defaultValue=None))
+                                                            defaultValue='TEMPORARY_OUTPUT'))
 
     def processAlgorithm(self, parameters, context, model_feedback):
         # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
@@ -94,7 +95,7 @@ class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
 
         # Descartar campos nao usados
         alg_params = {
-            'COLUMN': ["'",'id','nome','geometriaa','jurisdicao','administra','concession','revestimen','operaciona','situacaofi','canteirodi','nrpistas','nrfaixas','trafego','tipopavime','tipovia','sigla','codtrechor','limitevelo','trechoempe','acostament','length_otf',"'"],
+            'COLUMN': ['id','nome','geometriaa','jurisdicao','administra','concession','revestimen','operaciona','situacaofi','canteirodi','nrpistas','nrfaixas','trafego','tipopavime','tipovia','sigla','codtrechor','limitevelo','trechoempe','acostament','length_otf'],
             'INPUT': outputs['ExplodirLinhas']['OUTPUT'],
             'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
         }
@@ -166,12 +167,12 @@ class Projeto3SolucaoComplementar(QgsProcessingAlgorithm):
 
         # Descartar campos excedentes
         alg_params = {
-            'COLUMN': ["'",'Azimute','n','distance','feature_x','feature_y','nearest_x','nearest_y',"'"],
+            'COLUMN': ['Azimute','n','distance','feature_x','feature_y','nearest_x','nearest_y'],
             'INPUT': outputs['AlimentandoAColunaRotacao']['OUTPUT'],
-            'OUTPUT': parameters['EdificacoesRotacionadas']
+            'OUTPUT': parameters[self.OUTPUT]
         }
         outputs['DescartarCamposExcedentes'] = processing.run('native:deletecolumn', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
-        results['EdificacoesRotacionadas'] = outputs['DescartarCamposExcedentes']['OUTPUT']
+        results[self.OUTPUT] = outputs['DescartarCamposExcedentes']['OUTPUT']
 
         feedback.setCurrentStep(8)
         if feedback.isCanceled():
