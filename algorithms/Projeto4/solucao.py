@@ -69,7 +69,7 @@ import processing
 class Projeto4Solucao(QgsProcessingAlgorithm):
     """
     
-    Este algoritmo realiza a generalização de edifícios próximos às rodovias.
+    Este algoritmo realiza a revisão de ligação entre produtos.
 
     """
 
@@ -78,29 +78,44 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
     # calling from the QGIS console.
 
     # Camadas de input
-    EDIFICACOES = 'EDIFICACOES'
-    RODOVIAS = 'RODOVIAS'
+    CURVAS = 'CURVAS'
+    DRENAGEM = 'DRENAGEM'
+    VIAS = 'VIAS'
+    ENERGIA = 'ENERGIA'
     DISTANCIA = 'DISTANCIA'
+    MOLDURA = 'MOLDURA'
 
     # Camadas de output
     OUTPUT = 'OUTPUT'
 
     def initAlgorithm(self, config):
 
-        self.addParameter(QgsProcessingParameterVectorLayer(self.EDIFICACOES, self.tr('Insira as edificações'), 
-                                                            types=[QgsProcessing.TypeVectorPoint], 
-                                                            defaultValue=None))
-        
-        self.addParameter(QgsProcessingParameterVectorLayer(self.RODOVIAS, self.tr('Insira as rodovias'), 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.DRENAGEM, self.tr('Insira a camada de drenagem'), 
                                                             types=[QgsProcessing.TypeVectorLine], 
                                                             defaultValue=None))
-                
-        self.addParameter(QgsProcessingParameterNumber(self.DISTANCIA,
-                                                       self.tr('Insira a distância máxima de deslocamento'),
-                                                       defaultValue=60,
-                                                       type=QgsProcessingParameterNumber.Double))
+        
+        self.addParameter(QgsProcessingParameterVectorLayer(self.VIAS, self.tr('Insira a camada de rodovias'), 
+                                                            types=[QgsProcessing.TypeVectorLine], 
+                                                            defaultValue=None))
 
-        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Edificações generalizadas'), 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.ENERGIA, self.tr('Insira a camada de linhas de energia'), 
+                                                            types=[QgsProcessing.TypeVectorLine], 
+                                                            defaultValue=None))
+
+        self.addParameter(QgsProcessingParameterVectorLayer(self.CURVAS, self.tr('Insira as curvas de nível'), 
+                                                            types=[QgsProcessing.TypeVectorLine], 
+                                                            defaultValue=None))
+        
+        self.addParameter(QgsProcessingParameterVectorLayer(self.MOLDURA, self.tr('Insira a moldura'), 
+                                                            types=[QgsProcessing.TypeVectorPolygon], 
+                                                            defaultValue=None))
+                        
+        self.addParameter(QgsProcessingParameterNumber(self.DISTANCIA,
+                                                       self.tr('Insira a distância de busca'),
+                                                       defaultValue=0.008333,
+                                                       type=QgsProcessingParameterNumber.Double)) #Valor padrão está em meio minuto
+
+        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Erros'), 
                                                             type=QgsProcessing.TypeVectorPoint, 
                                                             createByDefault=True, 
                                                             supportsAppend=True, 
@@ -111,28 +126,59 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
         """
         Here is where the processing itself takes place.
         """
-        edificios = self.parameterAsVectorLayer(parameters,self.EDIFICACOES,context)
-        rodovias = self.parameterAsVectorLayer(parameters,self.RODOVIAS,context)
+        drenagem = self.parameterAsVectorLayer(parameters,self.DRENAGEM,context)
+        vias = self.parameterAsVectorLayer(parameters,self.VIAS,context)
+        energia = self.parameterAsVectorLayer(parameters,self.ENERGIA,context)
+        curvas = self.parameterAsVectorLayer(parameters,self.CURVAS,context)
+        moldura = self.parameterAsVectorLayer(parameters,self.MOLDURA,context)
         distancia = self.parameterAsDouble(parameters,self.DISTANCIA,context)
 
-        sinkFields = edificios.fields()
+        #Criação da camada de saída do tipo ponto com o tipo de erro
+        fields = QgsFields()
+        fields.append(QgsField("tipo_erro", QVariant.Double))
         (output_sink, output_dest_id) = self.parameterAsSink(parameters,self.OUTPUT,context,
-                                                             sinkFields,1,edificios.sourceCrs())
+                                                             fields,1,drenagem.sourceCrs())
         
-        total = 100.0 / edificios.featureCount() if edificios.featureCount() else 0
+        #total = 100.0 / edificios.featureCount() if edificios.featureCount() else 0
+        
+        #Criação de uma camada de linhas de interseção entre os produtos
+        intersecoes = list()
+        for molduras in moldura.getFeatures():
+            geometryMoldura = molduras.geometry()
+            idMoldura = molduras.id()
+            #feedback.setProgressText(f'{geometryMoldura}\n\n')
+            
+            for mold in moldura.getFeatures():
+                geometryMold = mold.geometry()
+                idMold = mold.id()
+                #feedback.setProgressText(f'{geometryMold}\n\n')
+                if idMoldura != idMold:
+                    if geometryMoldura.touches(geometryMold):
+                        linha = geometryMoldura.intersection(geometryMold)
+                        tipo = linha.type() #Está retornando 1 ou 0, sendo 1 para MultiLineString e 0 para Point
+                        #feedback.setProgressText(f'{tipo}\n\n')
+                        if tipo == 1:
+                            intersecoes.append(linha)
+                            #feedback.setProgressText(f'{linha}\n\n')
+        #feedback.pushInfo(f"2. Há {len(intersecoes)} linhas de interseção\n\n {intersecoes[0]}") #Pensar numa solução, está gerando oito linhas       
+        
+        intersecao = set()
+        for i in range (0, len(intersecoes)):
+            linha = intersecoes[i]
+            i_imutavel = tuple(linha)
+            intersecao.add(i_imutavel)
+        intersecao = list(intersecao)
+        feedback.pushInfo(f"2. Há {len(intersecao)} áreas de busca \n\n {intersecao[0]}")
 
-        pontos = edificios.getFeatures()
-        dist_min = 30.5 #Pouco maior que a soma da metade da via (25/2) + a metade da diagonal de um quadrado de lado 25
-        dist_min_ed = 35.5 #Pouco maior que a soma das metade das diagonais de um quadrado de lado 25
-        for current, ponto in enumerate(pontos):
-            geometriaPonto = ponto.geometry()
-            for partes in geometriaPonto.parts():
-                for p in partes.vertices():
-                    xi = p.x()
-                    yi = p.y()
-                    xn = xi
-                    yn = yi
+        #Criação das áreas de busca
+        areas = list()
+        for i in intersecao:
+            area_busca = i.buffer(distancia, 8)
+            areas.append(area_busca)
+        #feedback.pushInfo(f"2. Há {len(areas)} áreas de busca \n\n {areas[0]}")
 
+
+        """
                     for linha in rodovias.getFeatures():
                         geometriaLinha = linha.geometry()
                         for l in geometriaLinha.parts():
@@ -156,7 +202,7 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
                             
                             if feedback.isCanceled():
                                 break
-                    """
+                    
                     for point in edificios.getFeatures():
                         geometriaPoint = point.geometry()
                         if not geometriaPonto.equals(geometriaPoint):
@@ -171,7 +217,7 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
                                         yn = yp + (dist_min_ed/m)*(yn-yp)
                             
                             if feedback.isCanceled():
-                                break"""
+                                break
 
                     novo_ponto = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
                     novo_feat = QgsFeature(sinkFields)
@@ -194,7 +240,7 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
             'STYLE': style_file
         }
         processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
-        return {self.OUTPUT: output_dest_id}
+        return {self.OUTPUT: output_dest_id}"""
 
     def name(self):
         """
@@ -234,4 +280,4 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return Projeto3Solucao()
+        return Projeto4Solucao()
