@@ -33,33 +33,47 @@ __copyright__ = '(C) 2023 by Grupo 4'
 __revision__ = '$Format:%H$'
 
 from qgis.PyQt.Qt import QVariant, QCoreApplication
-from qgis.core import QgsProcessing
-from qgis.core import QgsProcessingAlgorithm
-from qgis.core import QgsProcessingMultiStepFeedback
-from qgis.core import QgsProcessingParameterVectorLayer
-from qgis.core import QgsProcessingParameterFeatureSink
+from qgis.core import (QgsProcessing, 
+                       QgsProcessingParameterMultipleLayers,
+                       QgsProcessingAlgorithm,
+                       QgsProcessingMultiStepFeedback,
+                       QgsProcessingParameterVectorLayer,
+                       QgsProcessingParameterFeatureSink,
+                       QgsProcessingParameterNumber)
 import processing
 import os
 
 class Projeto4SolucaoComplementar(QgsProcessingAlgorithm):
     """
-    Este algoritmo realiza a generalização de edifícios próximos às rodovias.
+    Este algoritmo identifica os polígonos que têm quebra de continuidade nas bordas das molduras
 
     """
 
     # Constants used to refer to parameters and outputs. They will be
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
+    POLIGONOS = 'POLIGONOS'
+    MOLDURAS = 'MOLDURAS'
+    DISTANCIA = 'DISTANCIA'
+
+    # Camadas de output
     OUTPUT = 'OUTPUT'
 
-    def initAlgorithm(self, config=None):
-        self.addParameter(QgsProcessingParameterVectorLayer('edificacoes', self.tr('Insira as edificações'),
-                                                            types=[QgsProcessing.TypeVectorPoint],
+    def initAlgorithm(self, config):
+        #INPUTS
+        #self.addParameter(QgsProcessingParameterMultipleLayer(self.POLIGONOS, self.tr('Camadas de poligonos avaliadas'), 
+        #                                                       layerType=QgsProcessing.TypeVectorPolygon, 
+        #                                                       defaultValue=None))
+        
+        self.addParameter(QgsProcessingParameterVectorLayer(self.POLIGONOS, self.tr('Camadas de poligonos avaliadas'), 
+                                                            types=[QgsProcessing.TypeVectorPolygon], 
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer('vias', self.tr('Insira as rodovias'),
-                                                            types=[QgsProcessing.TypeVectorLine],
+
+        self.addParameter(QgsProcessingParameterVectorLayer(self.MOLDURAS, self.tr('Insira as molduras'), 
+                                                            types=[QgsProcessing.TypeVectorPolygon], 
                                                             defaultValue=None))
-        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Edificacoes Rotacionadas'),
+                
+        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Polígonos com erro de Borda'),
                                                             type=QgsProcessing.TypeVectorAnyGeometry,
                                                             createByDefault=True,
                                                             supportsAppend=True,
@@ -68,103 +82,124 @@ class Projeto4SolucaoComplementar(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, model_feedback):
         # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
         # overall progress through the model
-        feedback = QgsProcessingMultiStepFeedback(9, model_feedback)
+        feedback = QgsProcessingMultiStepFeedback(12, model_feedback)
         results = {}
         outputs = {}
+        
+        poligonos = self.parameterAsVectorLayer(
+            parameters, 
+            self.POLIGONOS, 
+            context
+        )
+        molduras = self.parameterAsVectorLayer(
+            parameters, 
+            self.MOLDURAS, 
+            context
+        )
 
-        # Indices Espaciais Vias
+        # Indices Espaciais Poligonos
         alg_params = {
-            'INPUT': parameters['vias']
+            'INPUT': poligonos
         }
-        outputs['IndicesEspaciaisVias'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['IndicesEspaciaisPoligonos'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(1)
         if feedback.isCanceled():
             return {}
-
-        # Explodir linhas
-        alg_params = {
-            'INPUT': outputs['IndicesEspaciaisVias']['OUTPUT'],
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        }
-        outputs['ExplodirLinhas'] = processing.run('native:explodelines', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        
+        # Dissolver molduras de poligonos (para gerar limite externo)
+        lim_ext_pol = processing.run("native:dissolve", 
+                        {'INPUT':molduras,
+                       'FIELD':[],
+                       'SEPARATE_DISJOINT':False,
+                       'OUTPUT':'TEMPORARY_OUTPUT'})
 
         feedback.setCurrentStep(2)
         if feedback.isCanceled():
             return {}
+        
+        # Converter molduras de poligonos para linhas
 
-        # Descartar campos nao usados
-        alg_params = {
-            'COLUMN': ['id','nome','geometriaa','jurisdicao','administra','concession','revestimen','operaciona','situacaofi','canteirodi','nrpistas','nrfaixas','trafego','tipopavime','tipovia','sigla','codtrechor','limitevelo','trechoempe','acostament','length_otf'],
-            'INPUT': outputs['ExplodirLinhas']['OUTPUT'],
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        }
-        outputs['DescartarCamposNaoUsados'] = processing.run('native:deletecolumn', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        molduras_lin = processing.run("native:polygonstolines", 
+                                      {'INPUT':molduras
+                                       ,'OUTPUT':'TEMPORARY_OUTPUT'})
 
         feedback.setCurrentStep(3)
         if feedback.isCanceled():
             return {}
-
-        # Indices Espaciais Edificacoes
-        alg_params = {
-            'INPUT': parameters['edificacoes']
-        }
-        outputs['IndicesEspaciaisEdificacoes'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        
+        # Converter limite externo para linhas
+        lim_ext_lin = processing.run("native:polygonstolines", 
+                                      {'INPUT':lim_ext_pol
+                                       ,'OUTPUT':'TEMPORARY_OUTPUT'})
 
         feedback.setCurrentStep(4)
         if feedback.isCanceled():
             return {}
 
-        # Calculando os azimutes
-        alg_params = {
-            'FIELD_LENGTH': 10,
-            'FIELD_NAME': 'Azimute',
-            'FIELD_PRECISION': 5,
-            'FIELD_TYPE': 0,  # Decimal (double)
-            'FORMULA': 'degrees(azimuth(start_point($geometry),end_point($geometry)))',
-            'INPUT': outputs['DescartarCamposNaoUsados']['OUTPUT'],
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        }
-        outputs['CalculandoOsAzimutes'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        # Delimitacao das fronteiras internas
+
+        lim_int_molduras = processing.run("native:symmetricaldifference", {'INPUT':molduras_lin,
+                                                                           'OVERLAY':lim_ext_lin,
+                                                                           'OVERLAY_FIELDS_PREFIX':'',
+                                                                           'OUTPUT':'TEMPORARY_OUTPUT',
+                                                                           'GRID_SIZE':None})
 
         feedback.setCurrentStep(5)
         if feedback.isCanceled():
             return {}
 
-        # Unir atributos pelo mais proximo
-        alg_params = {
-            'DISCARD_NONMATCHING': False,
-            'FIELDS_TO_COPY': [''],
-            'INPUT': outputs['IndicesEspaciaisEdificacoes']['OUTPUT'],
-            'INPUT_2': outputs['CalculandoOsAzimutes']['OUTPUT'],
-            'MAX_DISTANCE': None,
-            'NEIGHBORS': 1,
-            'NON_MATCHING': None,
-            'PREFIX': '',
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        }
-        outputs['UnirAtributosPeloMaisProximo'] = processing.run('native:joinbynearest', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        # Selecionando os poligonos que serao avaliados
+
+        pol_analise = processing.run("native:extractbylocation", {'INPUT':pol_analise,
+                                                                  'PREDICATE':[0], #Intersecta
+                                                                  'INTERSECT':lim_int_molduras,
+                                                                  'OUTPUT':'TEMPORARY_OUTPUT'})
+ 
 
         feedback.setCurrentStep(6)
         if feedback.isCanceled():
             return {}
+        
+        # Delimitando poligonos validos
 
-        # Alimentando a coluna rotacao
-        alg_params = {
-            'FIELD_LENGTH': 0,
-            'FIELD_NAME': 'rotacao',
-            'FIELD_PRECISION': 0,
-            'FIELD_TYPE': 0,  # Decimal (double)
-            'FORMULA': '"Azimute"',
-            'INPUT': outputs['UnirAtributosPeloMaisProximo']['OUTPUT'],
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        }
-        outputs['AlimentandoAColunaRotacao'] = processing.run('native:fieldcalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
-
+        pol_validos = processing.run("native:extractbylocation", {'INPUT':pol_analise,
+                                                                  'PREDICATE':[7], #Cruza
+                                                                  'INTERSECT':lim_int_molduras,
+                                                                  'OUTPUT':'TEMPORARY_OUTPUT'})
+    
         feedback.setCurrentStep(7)
         if feedback.isCanceled():
             return {}
 
+        # Encontrando poligonos errados
+
+        pol_erro = lim_int_molduras = processing.run("native:symmetricaldifference", {'INPUT':pol_analise,
+                                                                           'OVERLAY':pol_validos,
+                                                                           'OVERLAY_FIELDS_PREFIX':'',
+                                                                           'OUTPUT':'TEMPORARY_OUTPUT',
+                                                                           'GRID_SIZE':None})
+
+        feedback.setCurrentStep(8)
+        if feedback.isCanceled():
+            return {}
+        
+        # Delimitando erros em linha
+
+        erro_linha = processing.run("native:clip", {'INPUT':lim_int_molduras,
+                                       'OVERLAY':pol_erro,
+                                       'OUTPUT':'TEMPORARY_OUTPUT'})
+
+        feedback.setCurrentStep(9)
+        if feedback.isCanceled():
+            return {}
+        
+        #Criando coluna de id
+        
+        feedback.setCurrentStep(10)
+        if feedback.isCanceled():
+            return {}
+        
         # Descartar campos excedentes
         alg_params = {
             'COLUMN': ['Azimute','n','distance','feature_x','feature_y','nearest_x','nearest_y'],
@@ -172,9 +207,11 @@ class Projeto4SolucaoComplementar(QgsProcessingAlgorithm):
             'OUTPUT': parameters[self.OUTPUT]
         }
         outputs['DescartarCamposExcedentes'] = processing.run('native:deletecolumn', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
-        results[self.OUTPUT] = outputs['DescartarCamposExcedentes']['OUTPUT']
 
-        feedback.setCurrentStep(8)
+        # Definindo resultado
+        results[self.OUTPUT] = outputs[erro_linha]['OUTPUT']
+
+        feedback.setCurrentStep(11)
         if feedback.isCanceled():
             return {}
 
