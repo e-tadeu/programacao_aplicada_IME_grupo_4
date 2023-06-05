@@ -112,7 +112,7 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
                         
         self.addParameter(QgsProcessingParameterNumber(self.DISTANCIA,
                                                        self.tr('Insira a distância de busca'),
-                                                       defaultValue=0.008333,
+                                                       defaultValue=0.01,
                                                        type=QgsProcessingParameterNumber.Double)) #Valor padrão está em meio minuto
 
         self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Erros'), 
@@ -135,7 +135,7 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
 
         #Criação da camada de saída do tipo ponto com o tipo de erro
         fields = QgsFields()
-        fields.append(QgsField("tipo_erro", QVariant.Double))
+        fields.append(QgsField("tipo_erro", QVariant.String))
         (output_sink, output_dest_id) = self.parameterAsSink(parameters,self.OUTPUT,context,
                                                              fields,1,drenagem.sourceCrs())
         
@@ -161,86 +161,39 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
                             intersecoes.append(linha)
                             #feedback.setProgressText(f'{linha}\n\n')
         #feedback.pushInfo(f"2. Há {len(intersecoes)} linhas de interseção\n\n {intersecoes[0]}") #Pensar numa solução, está gerando oito linhas       
-        
-        intersecao = set()
-        for i in range (0, len(intersecoes)):
-            linha = intersecoes[i]
-            i_imutavel = tuple(linha)
-            intersecao.add(i_imutavel)
-        intersecao = list(intersecao)
-        feedback.pushInfo(f"2. Há {len(intersecao)} áreas de busca \n\n {intersecao[0]}")
 
         #Criação das áreas de busca
         areas = list()
-        for i in intersecao:
+        for i in intersecoes:
             area_busca = i.buffer(distancia, 8)
             areas.append(area_busca)
-        #feedback.pushInfo(f"2. Há {len(areas)} áreas de busca \n\n {areas[0]}")
+        #feedback.pushInfo(f"2. Há {len(areas)} áreas de busca porque há {len(unique_intersecoes)}\n\n")
 
+        for area in areas:
+            #Vericação sobre as linhas de drenagem
+            bbox = area.boundingBox()
+            for linhas in drenagem.getFeatures(bbox):
+                geometryLinhas = linhas.geometry()
+                nome = str(linhas.attributes()[2])
+                if nome == 'NULL': continue
 
-        """
-                    for linha in rodovias.getFeatures():
-                        geometriaLinha = linha.geometry()
-                        for l in geometriaLinha.parts():
-                            pontoaux = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
-                            geoaux = QgsPoint(xn,yn)
-                            distance = pontoaux.distance(geometriaLinha)
-                            if distance < dist_min:
-                                p_prox = QgsGeometryUtils.closestPoint(l,geoaux)
-                                xp = p_prox.x()
-                                yp = p_prox.y()
-                                m = ((xn-xp)**2 + (yn-yp)**2)**0.5
-                                xn = xp + (dist_min/m)*(xn-xp)
-                                yn = yp + (dist_min/m)*(yn-yp)
-                            
-                            pontoaux_n = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
-                            pontoaux_i = QgsGeometry.fromPointXY(QgsPointXY(xi,yi))
-                            deslocamento = pontoaux_n.distance(pontoaux_i)
-                            if deslocamento > distancia:
-                                xn = xi
-                                yn = yi
-                            
-                            if feedback.isCanceled():
-                                break
+                for line in drenagem.getFeatures(bbox):
+                    geometryLine = line.geometry()
+                    name = str(line.attributes()[2])
+                    if name == 'NULL': continue
                     
-                    for point in edificios.getFeatures():
-                        geometriaPoint = point.geometry()
-                        if not geometriaPonto.equals(geometriaPoint):
-                            distance = geometriaPonto.distance(geometriaPoint)
-                            if distance < dist_min_ed:
-                                for partes in geometriaPoint.parts():
-                                    for pp in partes.vertices():
-                                        xp = pp.x()
-                                        yp = pp.y()
-                                        m = ((xn-xp)**2 + (yn-yp)**2)**0.5
-                                        xn = xp + (dist_min_ed/m)*(xn-xp)
-                                        yn = yp + (dist_min_ed/m)*(yn-yp)
-                            
-                            if feedback.isCanceled():
-                                break
-
-                    novo_ponto = QgsGeometry.fromPointXY(QgsPointXY(xn,yn))
-                    novo_feat = QgsFeature(sinkFields)
-                    novo_feat.setGeometry(novo_ponto)
-                    output_sink.addFeature(novo_feat)
-
-            current += 1
-            feedback.setProgress(int(current * total))
-
-        # Configurando o estilo da camada
-
-        # Get the path to the plugin directory
-        plugin_dir = os.path.dirname(__file__)
-
-        # Construct the path to the layer style file
-        style_file = os.path.join(plugin_dir, 'edificacoes.qml')
-
-        alg_params = {
-            'INPUT': output_dest_id,
-            'STYLE': style_file
-        }
-        processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
-        return {self.OUTPUT: output_dest_id}"""
+                    if nome != name:
+                            if nome in name:
+                                if geometryLinhas.touches(geometryLine):
+                                    p = geometryLinhas.intersection(geometryLine).asPoint()
+                                    p = QgsGeometry.fromPointXY(p)
+                                    if not geometryLinhas.contains(p):
+                                        feedback.pushInfo(f"O ponto {p} é o toque de {nome} com {name}.")
+                                        novo_feat = QgsFeature(fields)
+                                        novo_feat.setGeometry(p)
+                                        novo_feat.setAttribute(0, 'atributos distintos')
+                                        output_sink.addFeature(novo_feat)
+        return {self.OUTPUT: output_dest_id}
 
     def name(self):
         """
