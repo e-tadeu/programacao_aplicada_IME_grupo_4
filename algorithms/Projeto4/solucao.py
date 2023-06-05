@@ -48,6 +48,7 @@ from qgis.core import (QgsProcessing,
                        QgsExpressionContextUtils,
                        QgsPointXY,
                        QgsPoint,
+                       QgsPointLocator,
                        QgsSpatialIndex,
                        QgsFeatureSink,
                        QgsFields,
@@ -146,41 +147,51 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
         for molduras in moldura.getFeatures():
             geometryMoldura = molduras.geometry()
             idMoldura = molduras.id()
-            #feedback.setProgressText(f'{geometryMoldura}\n\n')
             
             for mold in moldura.getFeatures():
                 geometryMold = mold.geometry()
                 idMold = mold.id()
-                #feedback.setProgressText(f'{geometryMold}\n\n')
+
                 if idMoldura != idMold:
                     if geometryMoldura.touches(geometryMold):
                         linha = geometryMoldura.intersection(geometryMold)
                         tipo = linha.type() #Está retornando 1 ou 0, sendo 1 para MultiLineString e 0 para Point
-                        #feedback.setProgressText(f'{tipo}\n\n')
+
                         if tipo == 1:
                             intersecoes.append(linha)
-                            #feedback.setProgressText(f'{linha}\n\n')
-        #feedback.pushInfo(f"2. Há {len(intersecoes)} linhas de interseção\n\n {intersecoes[0]}") #Pensar numa solução, está gerando oito linhas       
 
-        #Criação das áreas de busca
-        areas = list()
+        #Eliminação de linhas de contato duplicadas entre produtos
+        unique_intersecoes = list()
         for i in intersecoes:
-            area_busca = i.buffer(distancia, 8)
-            areas.append(area_busca)
-
-        #Eliminação de áreas duplicadas
-        unique_areas = list()
-        for i in areas:
             is_duplicate = False
-            for j in unique_areas:
+            for j in unique_intersecoes:
                 if i.equals(j) or i.contains(j):
                     is_duplicate = True
                     break
             if not is_duplicate:
-                unique_areas.append(i)
-        feedback.pushInfo(f"2. Há {len(unique_areas)} áreas de busca\n\n")
+                unique_intersecoes.append(i)
+        feedback.pushInfo(f"2. Há {len(unique_intersecoes)} linhas de busca\n\n")
 
-        for area in unique_areas:
+        #Criação das áreas de busca
+        areas = list()
+        for i in unique_intersecoes:
+            area_busca = i.buffer(distancia, 8)
+            areas.append(area_busca)
+        feedback.pushInfo(f"2. Há {len(areas)} áreas de busca\n\n")
+
+        #Eliminação de áreas duplicadas
+        #unique_areas = list()
+        #for i in areas:
+        #    is_duplicate = False
+        #    for j in unique_areas:
+        #        if i.equals(j) or i.contains(j):
+        #            is_duplicate = True
+        #            break
+        #    if not is_duplicate:
+        #        unique_areas.append(i)
+        #feedback.pushInfo(f"2. Há {len(unique_areas)} áreas de busca\n\n")
+
+        for area in areas:
             #Vericação sobre as linhas de drenagem
             bbox = area.boundingBox()
             for linhas in drenagem.getFeatures(bbox):
@@ -203,6 +214,38 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
                                 novo_feat.setGeometry(p)
                                 novo_feat.setAttribute(0, 'atributos distintos')
                                 output_sink.addFeature(novo_feat)
+        
+        #for l in unique_intersecoes:
+        #    bbox = l.boundingBox()
+            #Verificação sobre as curvas de nível
+            for curva in curvas.getFeatures(bbox):
+                geometryCurva = curva.geometry()
+                id = curva.id()
+                for part in geometryCurva.parts():
+                    vertices = list(part)
+                ponto_inicial = QgsGeometry.fromPointXY(QgsPointXY(vertices[0].x(), vertices[0].y()))
+                ponto_final = QgsGeometry.fromPointXY(QgsPointXY(vertices[-1].x(), vertices[-1].y()))
+
+                if geometryCurva.within(area) or (geometryCurva.intersects(area) and area.contains(ponto_inicial)) or (geometryCurva.intersects(area) and area.contains(ponto_final)):
+                    
+                    for curve in curvas.getFeatures(bbox):
+                        geometryCurve = curve.geometry()
+                        if not geometryCurva.equals(geometryCurve):
+                            if not ponto_inicial.touches(geometryCurve):
+                                p = ponto_inicial
+                                feedback.pushInfo(f"O ponto {p} está está desconectado.")
+                                novo_feat = QgsFeature(fields)
+                                novo_feat.setGeometry(p)
+                                novo_feat.setAttribute(0, 'geometria desconectada')
+                                output_sink.addFeature(novo_feat)
+                            if not ponto_final.touches(geometryCurve):
+                                p = ponto_final
+                                feedback.pushInfo(f"O ponto {p} está está desconectado.")
+                                novo_feat = QgsFeature(fields)
+                                novo_feat.setGeometry(p)
+                                novo_feat.setAttribute(0, 'geometria desconectada')
+                                output_sink.addFeature(novo_feat)
+
         return {self.OUTPUT: output_dest_id}
 
     def name(self):
