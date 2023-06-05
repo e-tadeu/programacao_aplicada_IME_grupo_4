@@ -167,9 +167,20 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
         for i in intersecoes:
             area_busca = i.buffer(distancia, 8)
             areas.append(area_busca)
-        #feedback.pushInfo(f"2. Há {len(areas)} áreas de busca porque há {len(unique_intersecoes)}\n\n")
 
-        for area in areas:
+        #Eliminação de áreas duplicadas
+        unique_areas = list()
+        for i in areas:
+            is_duplicate = False
+            for j in unique_areas:
+                if i.equals(j) or i.contains(j):
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique_areas.append(i)
+        feedback.pushInfo(f"2. Há {len(unique_areas)} áreas de busca\n\n")
+
+        for area in unique_areas:
             #Vericação sobre as linhas de drenagem
             bbox = area.boundingBox()
             for linhas in drenagem.getFeatures(bbox):
@@ -182,17 +193,16 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
                     name = str(line.attributes()[2])
                     if name == 'NULL': continue
                     
-                    if nome != name:
-                            if nome in name:
-                                if geometryLinhas.touches(geometryLine):
-                                    p = geometryLinhas.intersection(geometryLine).asPoint()
-                                    p = QgsGeometry.fromPointXY(p)
-                                    if not geometryLinhas.contains(p):
-                                        feedback.pushInfo(f"O ponto {p} é o toque de {nome} com {name}.")
-                                        novo_feat = QgsFeature(fields)
-                                        novo_feat.setGeometry(p)
-                                        novo_feat.setAttribute(0, 'atributos distintos')
-                                        output_sink.addFeature(novo_feat)
+                    if nome != name and nome in name:
+                        if geometryLinhas.touches(geometryLine):
+                            p = geometryLinhas.intersection(geometryLine).asPoint()
+                            p = QgsGeometry.fromPointXY(p)
+                            if not geometryLinhas.contains(p):
+                                feedback.pushInfo(f"O ponto {p} é o toque de {nome} com {name}.")
+                                novo_feat = QgsFeature(fields)
+                                novo_feat.setGeometry(p)
+                                novo_feat.setAttribute(0, 'atributos distintos')
+                                output_sink.addFeature(novo_feat)
         return {self.OUTPUT: output_dest_id}
 
     def name(self):
