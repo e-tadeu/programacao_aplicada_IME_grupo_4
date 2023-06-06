@@ -65,7 +65,7 @@ class Projeto4SolucaoComplementar(QgsProcessingAlgorithm):
         #                                                       layerType=QgsProcessing.TypeVectorPolygon, 
         #                                                       defaultValue=None))
         
-        self.addParameter(QgsProcessingParameterVectorLayer(self.POLIGONOS, self.tr('Camadas de poligonos avaliadas'), 
+        self.addParameter(QgsProcessingParameterVectorLayer(self.POLIGONOS, self.tr('Camada de poligonos avaliados'), 
                                                             types=[QgsProcessing.TypeVectorPolygon], 
                                                             defaultValue=None))
 
@@ -82,7 +82,7 @@ class Projeto4SolucaoComplementar(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, model_feedback):
         # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
         # overall progress through the model
-        feedback = QgsProcessingMultiStepFeedback(12, model_feedback)
+        feedback = QgsProcessingMultiStepFeedback(9, model_feedback)
         results = {}
         outputs = {}
         
@@ -97,135 +97,119 @@ class Projeto4SolucaoComplementar(QgsProcessingAlgorithm):
             context
         )
 
-        # Indices Espaciais Poligonos
+        # Corrigir geometrias
         alg_params = {
-            'INPUT': poligonos
+            'INPUT': poligonos,
+            'METHOD': 1,  # Estrutura
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
         }
-        outputs['IndicesEspaciaisPoligonos'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['CorrigirGeometrias'] = processing.run('native:fixgeometries', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(1)
         if feedback.isCanceled():
             return {}
-        
-        # Dissolver molduras de poligonos (para gerar limite externo)
-        lim_ext_pol = processing.run("native:dissolve", 
-                        {'INPUT':molduras,
-                       'FIELD':[],
-                       'SEPARATE_DISJOINT':False,
-                       'OUTPUT':'TEMPORARY_OUTPUT'})
+
+        # Dissolver molduras
+        alg_params = {
+            'FIELD': [''],
+            'INPUT': molduras,
+            'SEPARATE_DISJOINT': False,
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['DissolverMolduras'] = processing.run('native:dissolve', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(2)
         if feedback.isCanceled():
             return {}
-        
-        # Converter molduras de poligonos para linhas
 
-        molduras_lin = processing.run("native:polygonstolines", 
-                                      {'INPUT':molduras
-                                       ,'OUTPUT':'TEMPORARY_OUTPUT'})
+        # Indices espaciais Poligonos
+        alg_params = {
+            'INPUT': outputs['CorrigirGeometrias']['OUTPUT']
+        }
+        outputs['IndicesEspaciaisPoligonos'] = processing.run('native:createspatialindex', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(3)
         if feedback.isCanceled():
             return {}
-        
-        # Converter limite externo para linhas
-        lim_ext_lin = processing.run("native:polygonstolines", 
-                                      {'INPUT':lim_ext_pol
-                                       ,'OUTPUT':'TEMPORARY_OUTPUT'})
+
+        # Limite externo das molduras
+        alg_params = {
+            'INPUT': outputs['DissolverMolduras']['OUTPUT'],
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['LimiteExternoDasMolduras'] = processing.run('native:polygonstolines', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(4)
         if feedback.isCanceled():
             return {}
 
-        # Delimitacao das fronteiras internas
-
-        lim_int_molduras = processing.run("native:symmetricaldifference", {'INPUT':molduras_lin,
-                                                                           'OVERLAY':lim_ext_lin,
-                                                                           'OVERLAY_FIELDS_PREFIX':'',
-                                                                           'OUTPUT':'TEMPORARY_OUTPUT',
-                                                                           'GRID_SIZE':None})
+        # Molduras em linha
+        alg_params = {
+            'INPUT': molduras,
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['MoldurasEmLinha'] = processing.run('native:polygonstolines', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(5)
         if feedback.isCanceled():
             return {}
 
-        # Selecionando os poligonos que serao avaliados
-
-        pol_analise = processing.run("native:extractbylocation", {'INPUT':pol_analise,
-                                                                  'PREDICATE':[0], #Intersecta
-                                                                  'INTERSECT':lim_int_molduras,
-                                                                  'OUTPUT':'TEMPORARY_OUTPUT'})
- 
+        # Fronteiras entre molduras
+        alg_params = {
+            'GRID_SIZE': None,
+            'INPUT': outputs['MoldurasEmLinha']['OUTPUT'],
+            'OVERLAY': outputs['LimiteExternoDasMolduras']['OUTPUT'],
+            'OVERLAY_FIELDS_PREFIX': '',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['FronteirasEntreMolduras'] = processing.run('native:symmetricaldifference', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(6)
         if feedback.isCanceled():
             return {}
-        
-        # Delimitando poligonos validos
 
-        pol_validos = processing.run("native:extractbylocation", {'INPUT':pol_analise,
-                                                                  'PREDICATE':[7], #Cruza
-                                                                  'INTERSECT':lim_int_molduras,
-                                                                  'OUTPUT':'TEMPORARY_OUTPUT'})
-    
+        # Buffer infinitesimal
+        alg_params = {
+            'DISSOLVE': False,
+            'DISTANCE': 0.001,
+            'END_CAP_STYLE': 1,  # Plano
+            'INPUT': outputs['FronteirasEntreMolduras']['OUTPUT'],
+            'JOIN_STYLE': 1,  # Pontiagudo
+            'MITER_LIMIT': 2,
+            'SEGMENTS': 5,
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['BufferInfinitesimal'] = processing.run('native:buffer', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
         feedback.setCurrentStep(7)
         if feedback.isCanceled():
             return {}
 
-        # Encontrando poligonos errados
-
-        pol_erro = lim_int_molduras = processing.run("native:symmetricaldifference", {'INPUT':pol_analise,
-                                                                           'OVERLAY':pol_validos,
-                                                                           'OVERLAY_FIELDS_PREFIX':'',
-                                                                           'OUTPUT':'TEMPORARY_OUTPUT',
-                                                                           'GRID_SIZE':None})
+        # Selecionando poligonos na regiao de borda
+        alg_params = {
+            'INPUT': outputs['IndicesEspaciaisPoligonos']['OUTPUT'],
+            'INTERSECT': outputs['BufferInfinitesimal']['OUTPUT'],
+            'PREDICATE': [0],  # interseccionam
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['SelecionandoPoligonosNaRegiaoDeBorda'] = processing.run('native:extractbylocation', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
 
         feedback.setCurrentStep(8)
         if feedback.isCanceled():
             return {}
-        
-        # Delimitando erros em linha
 
-        erro_linha = processing.run("native:clip", {'INPUT':lim_int_molduras,
-                                       'OVERLAY':pol_erro,
-                                       'OUTPUT':'TEMPORARY_OUTPUT'})
-
-        feedback.setCurrentStep(9)
-        if feedback.isCanceled():
-            return {}
-        
-        #Criando coluna de id
-        
-        feedback.setCurrentStep(10)
-        if feedback.isCanceled():
-            return {}
-        
-        # Descartar campos excedentes
+        # Interseção 
         alg_params = {
-            'COLUMN': ['Azimute','n','distance','feature_x','feature_y','nearest_x','nearest_y'],
-            'INPUT': outputs['AlimentandoAColunaRotacao']['OUTPUT'],
+            'GRID_SIZE': None,
+            'INPUT': outputs['FronteirasEntreMolduras']['OUTPUT'],
+            'INPUT_FIELDS': [''],
+            'OVERLAY': outputs['SelecionandoPoligonosNaRegiaoDeBorda']['OUTPUT'],
+            'OVERLAY_FIELDS': [''],
+            'OVERLAY_FIELDS_PREFIX': '',
             'OUTPUT': parameters[self.OUTPUT]
         }
-        outputs['DescartarCamposExcedentes'] = processing.run('native:deletecolumn', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
-
-        # Definindo resultado
-        results[self.OUTPUT] = outputs[erro_linha]['OUTPUT']
-
-        feedback.setCurrentStep(11)
-        if feedback.isCanceled():
-            return {}
-
-        # Configurando o estilo de camada de saida
-
-           # Get the path to the plugin directory
-        plugin_dir = os.path.dirname(__file__)
-        style_file = os.path.join(plugin_dir, 'edificacoes.qml')
-
-        alg_params = {
-            'INPUT': outputs['DescartarCamposExcedentes']['OUTPUT'],
-            'STYLE': style_file
-        }
-        outputs['ConfigurandoOEstiloDeCamadaDeSaida'] = processing.run('native:setlayerstyle', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['Interseo'] = processing.run('native:intersection', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        results[self.OUTPUT] = outputs['Interseo']['OUTPUT']
         return results
 
     def name(self):
