@@ -179,20 +179,10 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
             areas.append(area_busca)
         feedback.pushInfo(f"2. Há {len(areas)} áreas de busca\n\n")
 
-        #Eliminação de áreas duplicadas
-        #unique_areas = list()
-        #for i in areas:
-        #    is_duplicate = False
-        #    for j in unique_areas:
-        #        if i.equals(j) or i.contains(j):
-        #            is_duplicate = True
-        #            break
-        #    if not is_duplicate:
-        #        unique_areas.append(i)
-        #feedback.pushInfo(f"2. Há {len(unique_areas)} áreas de busca\n\n")
-
         for area in areas:
-            #Vericação sobre as linhas de drenagem
+
+            #VERIFICAÇÃO DOS ERROS POR ATRIBUTO
+            #Vericação de atributos sobre as linhas de drenagem
             bbox = area.boundingBox()
             for linhas in drenagem.getFeatures(bbox):
                 geometryLinhas = linhas.geometry()
@@ -215,37 +205,79 @@ class Projeto4Solucao(QgsProcessingAlgorithm):
                                 novo_feat.setAttribute(0, 'atributos distintos')
                                 output_sink.addFeature(novo_feat)
         
-        #for l in unique_intersecoes:
-        #    bbox = l.boundingBox()
+            #VERIFICAÇÃO DAS GEOMETRIAS DESCONECTADAS
+
             #Verificação sobre as curvas de nível
             for curva in curvas.getFeatures(bbox):
                 geometryCurva = curva.geometry()
-                id = curva.id()
                 for part in geometryCurva.parts():
                     vertices = list(part)
                 ponto_inicial = QgsGeometry.fromPointXY(QgsPointXY(vertices[0].x(), vertices[0].y()))
                 ponto_final = QgsGeometry.fromPointXY(QgsPointXY(vertices[-1].x(), vertices[-1].y()))
 
-                if geometryCurva.within(area) or (geometryCurva.intersects(area) and area.contains(ponto_inicial)) or (geometryCurva.intersects(area) and area.contains(ponto_final)):
-                    
+                #Caso da curva de nível que intersepta a área de busca
+                if not (geometryCurva.intersects(area) and area.contains(ponto_inicial)) or (geometryCurva.intersects(area) and area.contains(ponto_final)):
                     for curve in curvas.getFeatures(bbox):
                         geometryCurve = curve.geometry()
-                        if not geometryCurva.equals(geometryCurve):
-                            if not ponto_inicial.touches(geometryCurve):
+                        if (geometryCurva.equals(geometryCurve) or geometryCurva.contains(geometryCurve)):
+                            if ponto_inicial.disjoint(geometryCurve) and ponto_inicial.within(area):
                                 p = ponto_inicial
-                                feedback.pushInfo(f"O ponto {p} está está desconectado.")
                                 novo_feat = QgsFeature(fields)
                                 novo_feat.setGeometry(p)
                                 novo_feat.setAttribute(0, 'geometria desconectada')
                                 output_sink.addFeature(novo_feat)
-                            if not ponto_final.touches(geometryCurve):
+                            if ponto_final.disjoint(geometryCurve) and ponto_final.within(area):
                                 p = ponto_final
-                                feedback.pushInfo(f"O ponto {p} está está desconectado.")
                                 novo_feat = QgsFeature(fields)
                                 novo_feat.setGeometry(p)
                                 novo_feat.setAttribute(0, 'geometria desconectada')
                                 output_sink.addFeature(novo_feat)
 
+            #Verificação sobre as linhas de energia
+            for linhas in energia.getFeatures(bbox):
+                geometryLinhas = linhas.geometry()
+                for part in geometryLinhas.parts():
+                    vertices = list(part)
+                ponto_inicial = QgsGeometry.fromPointXY(QgsPointXY(vertices[0].x(), vertices[0].y()))
+                ponto_final = QgsGeometry.fromPointXY(QgsPointXY(vertices[-1].x(), vertices[-1].y()))
+
+                if not (geometryLinhas.intersects(area) and area.contains(ponto_inicial)) or (geometryLinhas.intersects(area) and area.contains(ponto_final)):
+                    for line in energia.getFeatures(bbox):
+                        geometryLine = line.geometry()
+                        if (geometryLinhas.equals(geometryLine) or geometryLinhas.contains(geometryLine)):
+                            if ponto_inicial.disjoint(geometryLine) and ponto_inicial.within(area):
+                                novo_feat = QgsFeature(fields)
+                                novo_feat.setGeometry(ponto_inicial)
+                                novo_feat.setAttribute(0, 'geometria desconectada')
+                                output_sink.addFeature(novo_feat)
+                            if ponto_final.disjoint(geometryLine) and ponto_final.within(area):
+                                novo_feat = QgsFeature(fields)
+                                novo_feat.setGeometry(ponto_final)
+                                novo_feat.setAttribute(0, 'geometria desconectada')
+                                output_sink.addFeature(novo_feat)
+            
+            #Verificação sobre as vias de deslocamento
+            for linhas in vias.getFeatures(bbox):
+                geometryLinhas = linhas.geometry()
+                for part in geometryLinhas.parts():
+                    vertices = list(part)
+                ponto_inicial = QgsGeometry.fromPointXY(QgsPointXY(vertices[0].x(), vertices[0].y()))
+                ponto_final = QgsGeometry.fromPointXY(QgsPointXY(vertices[-1].x(), vertices[-1].y()))
+
+                if (geometryLinhas.intersects(area) and area.contains(ponto_inicial)) or (geometryLinhas.intersects(area) and area.contains(ponto_final)):
+                    for line in energia.getFeatures(bbox):
+                        geometryLine = line.geometry()
+                        if not (geometryLinhas.equals(geometryLine) or geometryLinhas.contains(geometryLine)):
+                            if ponto_inicial.disjoint(geometryLine) and ponto_inicial.within(area):
+                                novo_feat = QgsFeature(fields)
+                                novo_feat.setGeometry(ponto_inicial)
+                                novo_feat.setAttribute(0, 'geometria desconectada')
+                                output_sink.addFeature(novo_feat)
+                            if ponto_final.disjoint(geometryLine) and ponto_final.within(area):
+                                novo_feat = QgsFeature(fields)
+                                novo_feat.setGeometry(ponto_final)
+                                novo_feat.setAttribute(0, 'geometria desconectada')
+                                output_sink.addFeature(novo_feat)
         return {self.OUTPUT: output_dest_id}
 
     def name(self):
